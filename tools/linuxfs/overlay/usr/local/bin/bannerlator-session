@@ -93,10 +93,9 @@ if [ "${BL_MALI_ANDROID_VULKAN:-0}" = 1 ]; then
       head -80 "$bl_mali_probe"
     else
       bl_mali_rc=$?
-      echo "== ERROR Mali Vulkan probe failed rc=$bl_mali_rc"
+      echo "== WARNING Mali Vulkan probe failed rc=$bl_mali_rc; continuing to gamescope"
+      echo "== The probe can crash during vendor-driver teardown even when a long-lived compositor works."
       head -120 "$bl_mali_probe"
-      rm -f "$bl_mali_probe"
-      exit 78
     fi
     rm -f "$bl_mali_probe"
   else
