@@ -1,6 +1,7 @@
 package com.droiddeck.launcher.session
 
 import com.droiddeck.launcher.gpu.GpuInfo
+import com.droiddeck.launcher.gpu.MaliSupportPackage
 import com.droiddeck.launcher.gpu.LinuxVulkanDriver
 import com.droiddeck.launcher.gpu.LinuxVulkanDriverManager
 
@@ -289,6 +290,23 @@ class SessionService : Service() {
         val sessionRoot = LinuxRuntime.sessionRoot(this).apply { mkdirs() }
         val runtimeDir = File(filesDir, ".wayland-rt").apply { mkdirs() }
         killStragglers()
+
+        // Keep the device-specific Mali bridge current independently from the APK. A previously
+        // downloaded package must not pin an old libhybris forever just because the APK also
+        // contains a fallback copy. Catalog/network failure is non-fatal when something is installed.
+        if (GpuInfo.detect().family == GpuInfo.Family.MALI) {
+            val before = MaliSupportPackage.installedVersion(this)
+            val problem = runCatching { MaliSupportPackage.installLatest(this) }.getOrElse {
+                Log.w(TAG, "Mali support auto-update", it)
+                it.message ?: "update failed"
+            }
+            val after = MaliSupportPackage.installedVersion(this)
+            if (problem != null) {
+                Log.w(TAG, "Mali support auto-update: " + problem + "; installed=" + (after ?: before ?: "none"))
+            } else {
+                Log.i(TAG, "Mali support ready: " + (after ?: "APK fallback") + " (was " + (before ?: "none") + ")")
+            }
+        }
         SessionFiles.stage(this, root)
 
         val sessionDir = openSessionFolder()
