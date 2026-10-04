@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Environment
 import android.util.Log
 import com.droiddeck.launcher.core.FileUtils
+import com.droiddeck.launcher.gpu.MaliSupportPackage
 import com.droiddeck.launcher.runtime.LinuxRuntime
 import com.droiddeck.launcher.runtime.ProotFastPath
 import java.io.File
@@ -129,7 +130,7 @@ object SessionFiles {
         // already-installed runtime predates the APK, so copy the complete versioned tree on every
         // session just like the session scripts above. No rootfs re-download is required.
         val maliBridge = "usr/local/lib/droiddeck-mali"
-        if (runCatching {
+        if (!MaliSupportPackage.isInstalled(context) && runCatching {
                 context.assets.list("linuxfs/usr/local/lib")?.contains("droiddeck-mali") == true
             }.getOrDefault(false)) {
             stageLinuxfsAssetTree(context, root, maliBridge)
