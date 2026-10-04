@@ -168,7 +168,7 @@ jobs:
           if test -f app/src/main/assets/linuxfs/usr/local/lib/droiddeck-mali/lib/libsysvk.so \
              && test -f app/src/main/assets/linuxfs/usr/local/lib/droiddeck-mali/lib/libhardware.so \
              && test -f app/src/main/assets/linuxfs/usr/local/lib/droiddeck-mali/lib/libVkLayer_window_system_integration.so \
-             && grep -q 'droiddeck-patches tls-sidecar-v1' app/src/main/assets/linuxfs/usr/local/lib/droiddeck-mali/SOURCES.txt 2>/dev/null; then
+             && grep -q 'droiddeck-patches tls-sidecar-v2' app/src/main/assets/linuxfs/usr/local/lib/droiddeck-mali/SOURCES.txt 2>/dev/null; then
             echo "found=true" >> "$GITHUB_OUTPUT"
           else
             echo "found=false" >> "$GITHUB_OUTPUT"
