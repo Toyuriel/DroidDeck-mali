@@ -35,6 +35,7 @@ public final class LinuxRuntime {
     /** Shortcut extra naming which of the modes above a Linux entry launches. */
     public static final String EXTRA_LINUX_MODE = "linux_mode";
     private static final String KGSL_DEVICE = "/dev/kgsl-3d0";
+    private static final String MALI_DEVICE = "/dev/mali0";
     /**
      * Where the guest sees a command's XDG_RUNTIME_DIR. A Unix socket's path must fit in 108 bytes,
      * and libwayland checks the guest's path before proot ever sees it: with the app on an SD card
@@ -191,6 +192,10 @@ public final class LinuxRuntime {
         // the kernel Mali driver. These are read-only inputs to PRoot; DroidDeck never modifies
         // Android system/vendor partitions. /dev above carries /dev/mali* and /dev/dma_heap/*.
         if (GpuInfo.Companion.detect().getFamily() == GpuInfo.Family.MALI) {
+            // Some Android/PRoot combinations expose the /dev directory bind but omit vendor GPU
+            // character nodes while traversing it. The Android-side Kbase probe can open this node,
+            // so bind it explicitly as well. This is the same device the stock Mali HAL and PanVK use.
+            if (new File(MALI_DEVICE).exists()) bind(cmd, MALI_DEVICE + ":" + MALI_DEVICE);
             for (String path : new String[]{"/system", "/system_ext", "/vendor", "/odm", "/product", "/apex"}) {
                 if (new File(path).exists()) bind(cmd, path);
             }
