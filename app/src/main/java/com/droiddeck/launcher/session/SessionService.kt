@@ -500,14 +500,17 @@ class SessionService : Service() {
         // by the teardown a second after the new one has started, and its exit used to arrive
         // here as "session ended: 137" and end the NEW session. An exit belongs to the session
         // that started it.
+        SessionEvents.record("guest.launch.begin", mapOf("mode" to SessionState.mode))
         val pid = HostProcess.start(line, hostEnv.asArray(), root, { status ->
             if (gen != sessionGen) {
                 Log.i(TAG, "an earlier session's process ended ($status); the current one carries on")
                 return@start
             }
+            SessionEvents.record("guest.process_exit", mapOf("status" to status))
             Log.i(TAG, "session ended: $status")
             stopSession(status ?: -1)
         }, null)
+        SessionEvents.record("guest.launch.result", mapOf("pid" to pid))
         Log.i(TAG, "session pid $pid, log ${sessionLog.path}")
         if (gen != sessionGen || !SessionState.running) {
             Log.i(TAG, "session stopped while its guest was starting; taking it down")
