@@ -28,10 +28,18 @@ use_renderer() {
   export WLR_RENDERER=$1
   if [ "$1" != pixman ] && [ -f "$WLROOTS_DIR/libwlroots-0.20.so" ]; then
     export LD_LIBRARY_PATH=$WLROOTS_DIR${BASE_LD_LIBRARY_PATH:+:$BASE_LD_LIBRARY_PATH}
-  elif [ -n "$BASE_LD_LIBRARY_PATH" ]; then
-    export LD_LIBRARY_PATH=$BASE_LD_LIBRARY_PATH
+    unset LIBGL_ALWAYS_SOFTWARE
   else
-    unset LD_LIBRARY_PATH
+    if [ -n "$BASE_LD_LIBRARY_PATH" ]; then
+      export LD_LIBRARY_PATH=$BASE_LD_LIBRARY_PATH
+    else
+      unset LD_LIBRARY_PATH
+    fi
+    # A pixman desktop must not initialize Zink/Vulkan just to paint LXQt, pcmanfm or the panel.
+    # The GPU launch wrapper explicitly restores Zink for games/emulators that need it.
+    unset MESA_LOADER_DRIVER_OVERRIDE GALLIUM_DRIVER LIBGL_KOPPER_DRI2
+    unset ZINK_DESCRIPTORS ZINK_DEBUG mesa_glthread MESA_NO_ERROR
+    export LIBGL_ALWAYS_SOFTWARE=1
   fi
 }
 use_renderer "$WLR_RENDERER"
@@ -54,6 +62,7 @@ if [ -n "${BL_DEBUG_DIR:-}" ]; then
   exec >>"$BL_DEBUG_DIR/desktop.log" 2>&1
   echo "== droiddeck-desktop $(date -u '+%Y-%m-%d %H:%M:%S UTC') renderer=$WLR_RENDERER"
 fi
+echo "== desktop prep: runtime cleanup"
 export WLR_BACKENDS=wayland
 # The cursor goes to the app's compositor as a wl_pointer cursor surface ("hardware" cursor on the
 # wayland backend), which the app draws as its pointer. Drawn into the desktop's own frames instead
@@ -84,6 +93,7 @@ fi
 # already running and exit without a word - a desktop with a wallpaper and nothing on it.
 # Only the app's own compositor socket (wayland-0) is kept.
 find "$XDG_RUNTIME_DIR" -mindepth 1 -maxdepth 1 ! -name 'wayland-0*' ! -name 'keymap.xkb' -exec rm -rf {} + 2>/dev/null
+echo "== desktop prep: runtime cleaned; configuring fonts"
 # fontconfig's rules (sans-serif -> DejaVu Sans and the rest) live as links in /etc/fonts/conf.d,
 # and the rootfs has none: applications then find fonts but no default font. Firefox logs
 # "no fonts" and draws pages without text.
@@ -110,25 +120,31 @@ if [ ! -f /etc/fonts/local.conf ]; then
 fi
 # The cache in the image was built before those rules existed; rebuild it once, and only once.
 if [ ! -f /var/cache/fontconfig/.droiddeck-built ] && command -v fc-cache >/dev/null 2>&1; then
-  fc-cache -f >/dev/null 2>&1 && touch /var/cache/fontconfig/.droiddeck-built
-  echo "== fontconfig: cache rebuilt, default sans is $(fc-match sans-serif 2>/dev/null)"
+  if timeout 20s fc-cache -f >/dev/null 2>&1; then
+    touch /var/cache/fontconfig/.droiddeck-built
+    echo "== fontconfig: cache rebuilt, default sans is $(fc-match sans-serif 2>/dev/null)"
+  else
+    echo "== WARNING fontconfig cache rebuild timed out; continuing"
+  fi
 fi
+echo "== desktop prep: fonts ready; generating menu entries"
 # The menu's "Steam" / "Steam Big Picture" entries and one entry per installed game: all of them
 # hand off to the app (bannerlator-steam-launch), since the client cannot draw on this desktop.
 export BL_DESKTOP=1
 ln -sf /usr/local/bin/bannerlator-steam-launch /usr/local/bin/steamdeck-steam 2>/dev/null
 ln -sf /usr/local/bin/bannerlator-steam-shim /usr/local/bin/steam 2>/dev/null
-python3 /usr/local/bin/bannerlator-desktop-games 2>&1 | sed 's/^/[games] /'
+timeout 15s python3 /usr/local/bin/bannerlator-desktop-games 2>&1 | sed 's/^/[games] /' || echo "[games] WARNING generation timed out or failed"
 # Player 1 on the controller in every emulator that has no profile of its own yet - now, and again
 # every half minute: an emulator started for the first time writes its own config, which is then
 # given the controller for its next start without waiting for the next desktop.
-python3 /usr/local/bin/bannerlator-pad-defaults 2>&1 | sed 's/^/[pads] /'
-( while sleep 30; do python3 /usr/local/bin/bannerlator-pad-defaults 2>&1 | sed 's/^/[pads] /'; done ) &
+timeout 15s python3 /usr/local/bin/bannerlator-pad-defaults 2>&1 | sed 's/^/[pads] /' || echo "[pads] WARNING initial defaults timed out or failed"
+( while sleep 30; do timeout 15s python3 /usr/local/bin/bannerlator-pad-defaults 2>&1 | sed 's/^/[pads] /'; done ) &
 # Games and emulators from the menu run through droiddeck-gpu (their own gamescope on the app's
 # compositor) while the desktop is on pixman, where they could not draw with the GPU.
 # BL_DESKTOP_GPU=on/off overrides; each entry keeps "Run in a desktop window" either way.
 gpu_entries() { python3 /usr/local/bin/droiddeck-desktop-gpu 2>&1 | sed 's/^/[gpu] /'; }
 gpu_entries
+echo "== desktop prep: helpers ready; launching labwc"
 
 # ~/.droiddeck-desktop-debug: labwc's own debug log (views and layer surfaces mapping) too. The GPU
 # renderers are experimental and always log in full, so a desktop that does not come up says why.
