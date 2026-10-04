@@ -484,6 +484,14 @@ jobs:
           retention-days: 30
           compression-level: 0
 
+      - name: Build glibc PanVK G720/Kbase component
+        if: ${{ success() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'mali-x8pro-experimental' }}
+        run: |
+          set -euo pipefail
+          bash tools/panvk-linux/build.sh
+          test -f app/src/main/assets/linuxfs/usr/local/lib/droiddeck-mali/panvk/libvulkan_panfrost.so
+          test -f app/src/main/assets/linuxfs/usr/local/lib/droiddeck-mali/panvk/panfrost_icd.json
+
       - name: Publish downloadable Mali Vulkan support
         if: ${{ success() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'mali-x8pro-experimental' }}
         env:
