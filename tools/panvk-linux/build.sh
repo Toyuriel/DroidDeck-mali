@@ -28,7 +28,7 @@ sudo apt-get update -qq
 sudo apt-get install -y -qq \
   git build-essential gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
   pkg-config bison flex libdrm-dev libelf-dev libwayland-dev wayland-protocols \
-  llvm-dev libclang-dev libclc-dev spirv-tools \
+  llvm-20-dev libclang-20-dev libclc-20-dev libllvmspirvlib-20-dev spirv-tools \
   libdrm-dev:arm64 libelf-dev:arm64 libwayland-dev:arm64 \
   libexpat1-dev:arm64 zlib1g-dev:arm64 >/dev/null
 python3 -m pip install --user -q --upgrade meson ninja mako PyYAML packaging
