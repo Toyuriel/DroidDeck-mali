@@ -48,12 +48,62 @@ collect_steam_logs() {
 trap 'collect_steam_logs 2>/dev/null || true' TERM INT HUP
 # The driver everything in this session draws with: gamescope's compositing, the client's UI
 # (OpenGL through Zink), every game Proton launches, and in desktop mode every program on it.
-# BL_VK_DRIVER names an imported driver's ICD manifest on the Android side, which is bound into the
-# session at its own path; unset means the runtime keeps the Turnip it was built with.
-# VK_DRIVER_FILES REPLACES the loader's search, so a manifest whose library is unreadable would
-# leave the session with no Vulkan at all - check both before setting it, and say so in the log
-# rather than fail silently half a minute later.
-if [ -n "${BL_VK_DRIVER:-}" ]; then
+# Mali is a separate path: glibc Vulkan -> sysvk -> libhybris -> the phone's Android vendor HAL,
+# with a Wayland WSI layer that supplies VK_KHR_wayland_surface and presents DMA-BUFs to DroidDeck.
+# Qualcomm keeps the existing Turnip/Freedreno path below.
+if [ "${BL_MALI_ANDROID_VULKAN:-0}" = 1 ]; then
+  bl_mali_root=/usr/local/lib/droiddeck-mali
+  bl_mali_icd="$bl_mali_root/share/vulkan/icd.d/sysvk.json"
+  bl_mali_sysvk="$bl_mali_root/lib/libsysvk.so"
+  bl_mali_hardware="$bl_mali_root/lib/libhardware.so"
+  bl_mali_wsi="$bl_mali_root/lib/libVkLayer_window_system_integration.so"
+  bl_mali_linker="$bl_mali_root/lib/libhybris/linker"
+
+  bl_mali_missing=
+  for bl_mali_need in "$bl_mali_icd" "$bl_mali_sysvk" "$bl_mali_hardware" "$bl_mali_wsi" "$bl_mali_linker"; do
+    [ -e "$bl_mali_need" ] || bl_mali_missing="$bl_mali_missing $bl_mali_need"
+  done
+  if [ -n "$bl_mali_missing" ]; then
+    echo "== ERROR Mali Vulkan bridge is incomplete; missing:$bl_mali_missing"
+    exit 78
+  fi
+
+  # Never allow a stale Qualcomm choice to override the Mali bridge.
+  unset BL_VK_DRIVER TU_DEBUG VK_DRIVER_FILES VK_ICD_FILENAMES
+  export HYBRIS_LINKER_DIR="$bl_mali_linker"
+  export HYBRIS_LD_LIBRARY_PATH="/system/lib64:/system_ext/lib64:/product/lib64:/vendor/lib64:/vendor/lib64/egl:/vendor/lib64/hw:/odm/lib64:/apex/com.android.runtime/lib64/bionic"
+  export HYBRIS_PTHREAD_RAW_EXIT=1
+  export HYBRIS_LD_DEBUG=-1
+  export LD_LIBRARY_PATH="$bl_mali_root/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+  export VK_DRIVER_FILES="$bl_mali_icd"
+  export VK_ICD_FILENAMES="$bl_mali_icd"
+  # The implicit layer manifest has enable_environment for this switch, so it is invisible on Adreno.
+  export DROIDDECK_MALI_WSI=1
+  echo "== vulkan driver: Mali Android HAL bridge (sysvk + libhybris), ICD=$VK_DRIVER_FILES"
+  echo "== vulkan WSI: Wayland bridge $bl_mali_wsi"
+  echo "== mali devices: $(ls /dev/mali* 2>/dev/null | tr '\n' ' ' || true)"
+  echo "== dma heaps: $(ls /dev/dma_heap 2>/dev/null | tr '\n' ' ' || true)"
+
+  # A clean identity check is much easier to diagnose than gamescope's later 'no physical device'.
+  # Not every runtime ships vulkaninfo, so absence of the utility is not itself a launch failure.
+  if command -v vulkaninfo >/dev/null 2>&1; then
+    bl_mali_probe=$(mktemp)
+    if timeout 15s vulkaninfo --summary >"$bl_mali_probe" 2>&1; then
+      echo "== Mali Vulkan probe: PASS"
+      head -80 "$bl_mali_probe"
+    else
+      bl_mali_rc=$?
+      echo "== ERROR Mali Vulkan probe failed rc=$bl_mali_rc"
+      head -120 "$bl_mali_probe"
+      rm -f "$bl_mali_probe"
+      exit 78
+    fi
+    rm -f "$bl_mali_probe"
+  else
+    echo "== Mali Vulkan probe: vulkaninfo is not installed; gamescope will be the probe"
+  fi
+  unset bl_mali_need bl_mali_missing bl_mali_root bl_mali_icd bl_mali_sysvk bl_mali_hardware bl_mali_wsi bl_mali_linker
+elif [ -n "${BL_VK_DRIVER:-}" ]; then
   bl_icd_lib=$(sed -n 's/.*"library_path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$BL_VK_DRIVER" 2>/dev/null | head -1)
   # JSON may escape the separator: org.json writes "\/data\/user\/0\/...". The Vulkan loader
   # parses that correctly; this check has to as well, or an absolute path looks relative and gets
