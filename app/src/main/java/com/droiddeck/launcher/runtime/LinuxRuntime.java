@@ -6,6 +6,7 @@ import android.system.ErrnoException;
 import android.system.Os;
 import android.system.StructStat;
 import android.system.StructUtsname;
+import com.droiddeck.launcher.gpu.GpuInfo;
 import com.droiddeck.launcher.session.SessionPrefs;
 
 
@@ -186,6 +187,16 @@ public final class LinuxRuntime {
         bind(cmd, "/dev");
         bind(cmd, "/proc");
         bind(cmd, "/sys");
+        // Experimental Mali path: libhybris needs the device-owned Android userspace that matches
+        // the kernel Mali driver. These are read-only inputs to PRoot; DroidDeck never modifies
+        // Android system/vendor partitions. /dev above carries /dev/mali* and /dev/dma_heap/*.
+        if (GpuInfo.Companion.detect().getFamily() == GpuInfo.Family.MALI) {
+            for (String path : new String[]{"/system", "/system_ext", "/vendor", "/odm", "/product", "/apex"}) {
+                if (new File(path).exists()) bind(cmd, path);
+            }
+            File linkerConfig = new File("/linkerconfig/ld.config.txt");
+            if (linkerConfig.isFile()) bind(cmd, linkerConfig.getPath());
+        }
         bind(cmd, "/dev/urandom:/dev/random");
         bind(cmd, "/proc/self/fd:/dev/fd");
         bind(cmd, "/proc/self/fd/0:/dev/stdin");
