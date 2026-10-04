@@ -50,7 +50,9 @@ test -f "$ANDROID_INCLUDE/hardware/hardware.h"
 
 echo "== Mali bridge: patched libhybris"
 git -C "$SRC/libhybris" apply /src/tools/mali-bridge/patches/libhybris-0001-optional-raw-pthread-exit.patch
-git -C "$SRC/libhybris" apply /src/tools/mali-bridge/patches/libhybris-0002-isolate-android-static-tls.patch
+# The static-TLS sidecar patch is a later Qt/Plasma hardening experiment. The rootless
+# Vulkan baseline uses the raw vendor-thread exit workaround above; keep the sidecar out
+# until the basic gamescope/vendor-HAL path is proven on this MediaTek device.
 (
   cd "$SRC/libhybris/hybris"
   NOCONFIGURE=1 ./autogen.sh >/dev/null
