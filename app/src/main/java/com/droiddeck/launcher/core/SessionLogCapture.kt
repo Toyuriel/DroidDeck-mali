@@ -33,6 +33,10 @@ object SessionLogCapture {
     /** Start mirroring this process's log lines into [target]. Safe to call twice. */
     @Synchronized
     fun start(target: File) {
+        // SessionEvents.begin starts capture before the service/runtime exists. When the service
+        // later opens the same session folder, keep that capture instead of truncating the only
+        // lines that can explain a failure before proot/gamescope starts.
+        if (this.target?.absolutePath == target.absolutePath && writer != null) return
         stop()
         try {
             val out = target.bufferedWriter()
