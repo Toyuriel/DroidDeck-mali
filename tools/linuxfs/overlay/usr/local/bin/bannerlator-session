@@ -46,6 +46,18 @@ collect_steam_logs() {
 }
 # A session that is killed never reaches the copy below, and those are the sessions worth reading.
 trap 'collect_steam_logs 2>/dev/null || true' TERM INT HUP
+# The hosted Linux desktop is our recovery/debug path on Mali: keep it independent from
+# libhybris/sysvk until that bridge is proven. LXQt/labwc on pixman need no Vulkan at all.
+if [ "$mode" = lxqt ] && [ "${BL_DESKTOP_SOFTWARE:-0}" = 1 ]; then
+  unset BL_MALI_ANDROID_VULKAN BL_VK_DRIVER TU_DEBUG VK_DRIVER_FILES VK_ICD_FILENAMES
+  unset DROIDDECK_MALI_WSI HYBRIS_LINKER_DIR HYBRIS_LD_LIBRARY_PATH HYBRIS_PTHREAD_RAW_EXIT HYBRIS_LD_DEBUG
+  unset MESA_LOADER_DRIVER_OVERRIDE GALLIUM_DRIVER LIBGL_KOPPER_DRI2
+  unset ZINK_DESCRIPTORS ZINK_DEBUG mesa_glthread MESA_NO_ERROR
+  export LIBGL_ALWAYS_SOFTWARE=1
+  export BL_WLR_RENDERER=pixman
+  echo "== desktop: software-safe mode; Mali Vulkan bridge completely bypassed"
+fi
+
 # The driver everything in this session draws with: gamescope's compositing, the client's UI
 # (OpenGL through Zink), every game Proton launches, and in desktop mode every program on it.
 # Mali is a separate path: glibc Vulkan -> sysvk -> libhybris -> the phone's Android vendor HAL,
