@@ -244,14 +244,14 @@ class SessionService : Service() {
      * which is when they matter. The collecting itself is [SessionArtifacts], shared with the
      * crash handler and the next-start sweep so a folder is finished whichever way it ends.
      */
-    private fun collectSessionArtifacts(dir: File) {
+    private fun collectSessionArtifacts(dir: File, preservePrivate: Boolean) {
         try {
             SessionArtifacts.collect(this, dir, "session stopped")
         } finally {
             // Last, so everything above is in the file it is about - and only this session's:
             // a session that replaced this one may already own the capture and the folder.
             SessionLogCapture.stopFor(dir)
-            SessionPaths.release(this, dir)
+            SessionPaths.release(this, dir, preservePrivate)
         }
     }
 
@@ -1314,7 +1314,8 @@ class SessionService : Service() {
         // dump the crash buffer. That was about four and a half seconds of blocked main thread,
         // and Android ANR'd the app for it: the desktop session that would not let go.
         val ended = SessionPaths.take()
-        if (ended != null) Thread({ collectSessionArtifacts(ended) }, "session-collect").start()
+        val preservePrivateLog = SessionState.mode == MODE_STEAM
+        if (ended != null) Thread({ collectSessionArtifacts(ended, preservePrivateLog) }, "session-collect").start()
         components.reversed().forEach {
             try {
                 it.stop()
