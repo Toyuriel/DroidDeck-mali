@@ -1031,6 +1031,7 @@ class MainActivity : ComponentActivity() {
                 onImportAndroid = { pickAndroidDriver.launch(InAppFilePicker.buildIntent(this, ZIP_EXT, "Choose a display driver (AdrenoTools zip or Android + Linux bundle)")) },
                 onImportZip = { pickAnyDriver.launch(InAppFilePicker.buildIntent(this, ZIP_EXT, "Choose a driver zip or an Android + Linux bundle")) },
                 onRestoreBundled = { TurnipDriver(this).restoreBundled(); drivers.refreshDrivers() },
+                onMaliSupport = { drivers.updateMaliSupport() },
             ),
         )
     }
