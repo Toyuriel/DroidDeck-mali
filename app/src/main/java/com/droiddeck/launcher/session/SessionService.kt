@@ -278,10 +278,17 @@ class SessionService : Service() {
 
     private fun runSession(gen: Int) {
         SessionTerminal.clear()
+        val sessionDir = openSessionFolder()
+        val sessionLog = File(sessionDir, "session.log")
+        SessionEvents.record("startup.run_session_entered", mapOf("generation" to gen))
+
         try {
+            SessionEvents.record("startup.write_accounts.begin")
             LinuxRuntime.writeAccounts(this)
+            SessionEvents.record("startup.write_accounts.ok")
         } catch (e: Exception) {
             Log.e(TAG, "could not write the guest's passwd/group", e)
+            SessionEvents.fail("WRITE_ACCOUNTS_FAILED", e.message ?: "could not write guest accounts")
             stopSession(-1)
             return
         }
@@ -289,7 +296,9 @@ class SessionService : Service() {
         val root = LinuxRuntime.rootDir(this)
         val sessionRoot = LinuxRuntime.sessionRoot(this).apply { mkdirs() }
         val runtimeDir = File(filesDir, ".wayland-rt").apply { mkdirs() }
+        SessionEvents.record("startup.kill_stragglers.begin")
         killStragglers()
+        SessionEvents.record("startup.kill_stragglers.ok")
 
         // Keep the device-specific Mali bridge current independently from the APK. A previously
         // downloaded package must not pin an old libhybris forever just because the APK also
