@@ -133,6 +133,17 @@ if [ "${BL_MALI_ANDROID_VULKAN:-0}" = 1 ]; then
   echo "== vulkan driver: Mali Android HAL bridge (sysvk + libhybris), ICD=$VK_DRIVER_FILES"
   echo "== vulkan WSI: Wayland bridge $bl_mali_wsi"
   echo "== mali devices: $(ls /dev/mali* 2>/dev/null | tr '\n' ' ' || true)"
+  if [ -e /dev/mali0 ]; then
+    echo "== kbase guest node: $(stat -c '%F mode=%a major=%t minor=%T' /dev/mali0 2>/dev/null || echo present)"
+    if ( exec 9<>/dev/mali0 ) 2>/dev/null; then
+      echo "== kbase guest open: PASS"
+      exec 9>&- 2>/dev/null || true
+    else
+      echo "== kbase guest open: FAIL"
+    fi
+  else
+    echo "== kbase guest node: MISSING"
+  fi
   echo "== dma heaps: $(ls /dev/dma_heap 2>/dev/null | tr '\n' ' ' || true)"
 
   # A clean identity check is much easier to diagnose than gamescope's later 'no physical device'.
@@ -280,6 +291,7 @@ if [ -z "${BL_INSIDE:-}" ]; then
   # still offers the levels and nothing appears. Starts hidden until the client writes a level.
   # BL_MANGOAPP=0 turns it off (one community build found Valve's mangoapp crashing on Turnip).
   if [ "$mode" = steam ] && [ "${BL_STEAMDECK:-0}" = 1 ] && [ "${BL_MANGOAPP:-1}" = 1 ] \
+     && [ "${BL_MALI_ANDROID_VULKAN:-0}" != 1 ] \
      && [ "${BL_STEAM_UI:-}" != desktop ] && command -v mangoapp >/dev/null 2>&1; then
     MANGOHUD_CONFIGFILE=$(mktemp /tmp/mangohud.XXXXXXXX)
     echo no_display > "$MANGOHUD_CONFIGFILE"
@@ -288,6 +300,14 @@ if [ -z "${BL_INSIDE:-}" ]; then
     echo "== gamescope: mangoapp on ($(command -v mangoapp), config $MANGOHUD_CONFIGFILE)"
   fi
   export BL_INSIDE=1
+  if [ "${BL_MALI_ANDROID_VULKAN:-0}" = 1 ]; then
+    echo "== gamescope: Mali bring-up, mangoapp disabled; launching compositor"
+    gamescope "${args[@]}" -- "$0" "$mode" "$@"
+    bl_gamescope_rc=$?
+    echo "== gamescope exited rc=$bl_gamescope_rc"
+    collect_steam_logs 2>/dev/null || true
+    exit "$bl_gamescope_rc"
+  fi
   exec gamescope "${args[@]}" -- "$0" "$mode" "$@"
 fi
 
