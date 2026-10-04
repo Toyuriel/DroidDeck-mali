@@ -56,7 +56,47 @@ git -C "$SRC/libhybris" apply /src/tools/mali-bridge/patches/libhybris-0001-opti
 # same pinned linker snapshot but carries slightly different surrounding context.
 (
   cd "$SRC/libhybris"
-  patch -p1 --fuzz=3 --forward < /src/tools/mali-bridge/patches/libhybris-0002-isolate-android-static-tls.patch
+  # The proof patch's functional hunks apply to this pinned tree, but GNU patch can
+  # fail its final cleanup hunk after the earlier insertion shifts the assembly.
+  # Accept that specific partial application, then remove the duplicate macro block
+  # deterministically and verify every functional marker before compiling.
+  patch -p1 --fuzz=3 --forward < /src/tools/mali-bridge/patches/libhybris-0002-isolate-android-static-tls.patch || true
+  python3 - <<'PY'
+from pathlib import Path
+
+tls = Path("hybris/common/q/linker_tls.cpp")
+asm = Path("hybris/common/q/tlsdesc_resolver.S")
+t = tls.read_text()
+a = asm.read_text()
+
+if "__hybris_static_tls_address" not in t:
+    raise SystemExit("TLS sidecar C++ hunk did not apply")
+if "bl __hybris_static_tls_address" not in a:
+    raise SystemExit("TLS sidecar static TLSDESC hunk did not apply")
+
+marker = "#define SAVE_REG(x, slot)"
+positions = []
+start = 0
+while True:
+    i = a.find(marker, start)
+    if i < 0:
+        break
+    positions.append(i)
+    start = i + len(marker)
+
+if len(positions) == 2:
+    second = positions[1]
+    end_marker = "// On entry, x0 is the address of a TlsDynamicResolverArg object"
+    end = a.find(end_marker, second)
+    if end < 0:
+        raise SystemExit("Could not locate duplicate TLS macro block end")
+    a = a[:second] + a[end:]
+elif len(positions) != 1:
+    raise SystemExit(f"Unexpected SAVE_REG macro count after TLS patch: {len(positions)}")
+
+asm.write_text(a)
+print("TLS sidecar patch normalized: functional hunks present, one macro block")
+PY
 )
 (
   cd "$SRC/libhybris/hybris"
@@ -160,7 +200,7 @@ libhybris $LIBHYBRIS_SHA
 sysvk $SYSVK_SHA
 vulkan-wsi-layer $WSI_SHA
 Vulkan-Headers $VULKAN_HEADERS_SHA
-droiddeck-patches tls-sidecar-v1
+droiddeck-patches tls-sidecar-v2
 EOF
 
 echo "== Mali bridge: dependency audit"
