@@ -16,6 +16,7 @@ import com.droiddeck.launcher.gpu.DriverPairs
 import com.droiddeck.launcher.gpu.GpuInfo
 import com.droiddeck.launcher.gpu.LinuxVulkanDriver
 import com.droiddeck.launcher.gpu.LinuxVulkanDriverManager
+import com.droiddeck.launcher.gpu.MaliSupportPackage
 import com.droiddeck.launcher.gpu.TurnipDriver
 import com.droiddeck.launcher.gpu.TurnipReleases
 import com.droiddeck.launcher.session.SessionService
@@ -52,6 +53,10 @@ internal class DriverMenus(private val activity: Activity, private val ui: Handl
     var pairPercent by mutableIntStateOf(-1)
     /** What Auto last did or found, for the line under the pair in use. */
     var autoStatus by mutableStateOf("")
+    var maliSupportVersion by mutableStateOf<String?>(null)
+    var maliSupportStatus by mutableStateOf("")
+    var maliSupportBusy by mutableStateOf(false)
+    var maliSupportPercent by mutableIntStateOf(-1)
     /** The bundle both drivers are set to, as "DD-Turnip 0.1.0", or null when they are not one. */
     var activeBundle by mutableStateOf<String?>(null)
     private var autoCheckedThisProcess = false
@@ -64,6 +69,11 @@ internal class DriverMenus(private val activity: Activity, private val ui: Handl
         linuxRows = linuxRows, linuxSelected = linuxSelected, androidRows = androidRows, androidSelected = androidSelected,
         linuxDownloads = linuxDownloads, androidDownloads = androidDownloads, canRestoreBundled = canRestoreBundled,
         activeBundle = activeBundle,
+        mali = gpu.family == GpuInfo.Family.MALI,
+        maliSupportVersion = maliSupportVersion,
+        maliSupportStatus = maliSupportStatus,
+        maliSupportBusy = maliSupportBusy,
+        maliSupportPercent = maliSupportPercent,
     )
     var androidRows by mutableStateOf<List<DriverRow>>(emptyList())
     var androidSelected by mutableStateOf("")
@@ -102,6 +112,12 @@ internal class DriverMenus(private val activity: Activity, private val ui: Handl
         canRestoreBundled = td.hiddenBundled().isNotEmpty()
         androidSelected = SessionPrefs.androidDriver(activity)
         activeBundle = DriverBundle.active(activity)?.label
+        if (gpu.family == GpuInfo.Family.MALI) {
+            maliSupportVersion = MaliSupportPackage.installedVersion(activity)
+            if (maliSupportStatus.isEmpty()) {
+                maliSupportStatus = if (maliSupportVersion != null) "Installed $maliSupportVersion" else "Not installed"
+            }
+        }
         refreshReleaseRows()
         refreshPairs()
     }
@@ -152,6 +168,10 @@ internal class DriverMenus(private val activity: Activity, private val ui: Handl
         if (mode != SessionPrefs.GPU_DRIVERS_AUTO || pairBusy != null || releaseChecking) return
         if (!force && autoCheckedThisProcess) return
         autoCheckedThisProcess = true
+        if (gpu.family == GpuInfo.Family.MALI) {
+            updateMaliSupport()
+            return
+        }
         if (DriverPairs.recommendedKey(gpu, emptyList()) == null) {
             autoStatus = "No drivers to set: ${gpu.supportText.lowercase()}"
             return
@@ -179,6 +199,39 @@ internal class DriverMenus(private val activity: Activity, private val ui: Handl
                 }
             }
         }, "gpu-driver-auto").start()
+    }
+
+    fun updateMaliSupport() {
+        if (gpu.family != GpuInfo.Family.MALI || maliSupportBusy) return
+        maliSupportBusy = true
+        maliSupportPercent = 0
+        maliSupportStatus = "Checking Mali Vulkan support…"
+        autoStatus = maliSupportStatus
+        Thread({
+            val release = MaliSupportPackage.fetchRelease()
+            val problem = if (release == null) "Could not reach the Mali Vulkan support catalog" else {
+                val installed = MaliSupportPackage.installedVersion(activity)
+                if (installed == release.version) null
+                else MaliSupportPackage.install(activity, release) { stage, percent ->
+                    ui.post {
+                        maliSupportStatus = stage
+                        maliSupportPercent = percent
+                        autoStatus = stage
+                    }
+                }
+            }
+            ui.post {
+                maliSupportBusy = false
+                maliSupportPercent = -1
+                maliSupportVersion = MaliSupportPackage.installedVersion(activity)
+                maliSupportStatus = problem ?: if (maliSupportVersion != null) "Installed $maliSupportVersion" else "Installed"
+                autoStatus = maliSupportStatus
+                if (problem != null) {
+                    android.widget.Toast.makeText(activity, problem, android.widget.Toast.LENGTH_LONG).show()
+                }
+                refreshDrivers()
+            }
+        }, "mali-support").start()
     }
 
     /** Manual: install (if need be) and set both halves of a pair. */
