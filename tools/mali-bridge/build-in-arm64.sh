@@ -50,9 +50,14 @@ test -f "$ANDROID_INCLUDE/hardware/hardware.h"
 
 echo "== Mali bridge: patched libhybris"
 git -C "$SRC/libhybris" apply /src/tools/mali-bridge/patches/libhybris-0001-optional-raw-pthread-exit.patch
-# The static-TLS sidecar patch is a later Qt/Plasma hardening experiment. The rootless
-# Vulkan baseline uses the raw vendor-thread exit workaround above; keep the sidecar out
-# until the basic gamescope/vendor-HAL path is proven on this MediaTek device.
+# Mali vendor blobs can resolve Android static TLS into glibc's TCB and crash the host
+# process (typically rc=139). Isolate Android static TLS in a per-host-thread sidecar.
+# GNU patch is intentionally used here because this proof patch was generated from the
+# same pinned linker snapshot but carries slightly different surrounding context.
+(
+  cd "$SRC/libhybris"
+  patch -p1 --fuzz=3 --forward < /src/tools/mali-bridge/patches/libhybris-0002-isolate-android-static-tls.patch
+)
 (
   cd "$SRC/libhybris/hybris"
   NOCONFIGURE=1 ./autogen.sh >/dev/null
@@ -155,6 +160,7 @@ libhybris $LIBHYBRIS_SHA
 sysvk $SYSVK_SHA
 vulkan-wsi-layer $WSI_SHA
 Vulkan-Headers $VULKAN_HEADERS_SHA
+droiddeck-patches tls-sidecar-v1
 EOF
 
 echo "== Mali bridge: dependency audit"
