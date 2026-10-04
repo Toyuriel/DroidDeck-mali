@@ -29,6 +29,7 @@ concurrency:
 
 env:
   PRELOAD_CACHE_VERSION: v2
+  DROIDDECK_UPSTREAM_REPO: Droid-Deck/DroidDeck
 
 jobs:
   build:
@@ -190,7 +191,7 @@ jobs:
           done
           if [ -f tools/gamescope/release.env ]; then
             . tools/gamescope/release.env
-            gh release download "${GAMESCOPE_TAG}" -R "${GITHUB_REPOSITORY}" -p gamescope.tzst -O gamescope.tzst
+            gh release download "${GAMESCOPE_TAG}" -R "${DROIDDECK_UPSTREAM_REPO}" -p gamescope.tzst -O gamescope.tzst
             echo "${GAMESCOPE_SHA256}  gamescope.tzst" | sha256sum -c -
             tar --use-compress-program=unzstd -xf gamescope.tzst -C "$D"
             test -f "$D/usr/local/bin/gamescope"
@@ -198,7 +199,7 @@ jobs:
           fi
           if [ -f tools/wlroots/release.env ]; then
             . tools/wlroots/release.env
-            gh release download "${WLROOTS_TAG}" -R "${GITHUB_REPOSITORY}" -p wlroots.tzst -O wlroots.tzst
+            gh release download "${WLROOTS_TAG}" -R "${DROIDDECK_UPSTREAM_REPO}" -p wlroots.tzst -O wlroots.tzst
             echo "${WLROOTS_SHA256}  wlroots.tzst" | sha256sum -c -
             tar --use-compress-program=unzstd -xf wlroots.tzst -C "$D"
             test -f "$D/usr/local/lib/droiddeck-wlroots/libwlroots-0.20.so"
