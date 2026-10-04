@@ -46,6 +46,44 @@ collect_steam_logs() {
 }
 # A session that is killed never reaches the copy below, and those are the sessions worth reading.
 trap 'collect_steam_logs 2>/dev/null || true' TERM INT HUP
+
+# A Steam session can disappear before its own client log says anything. Keep a short, argument-free
+# process timeline so a report tells us whether gamescope, the native Steam client or steamwebhelper
+# was the first process to vanish. No command lines or environment variables are recorded.
+trace_steam_processes() {
+  [ "$mode" = steam ] || return 0
+  [ -n "${BL_DEBUG_DIR:-}" ] || return 0
+  (
+    out="$BL_DEBUG_DIR/processes.log"
+    echo "DroidDeck Steam process timeline" > "$out"
+    echo "Columns: utc name pid ppid state threads vmrss" >> "$out"
+    for _bl_tick in $(seq 1 180); do
+      _bl_now=$(date -u +%H:%M:%S.%3N 2>/dev/null || date -u +%H:%M:%S)
+      _bl_seen=0
+      for _bl_d in /proc/[0-9]*; do
+        [ -r "$_bl_d/status" ] || continue
+        _bl_name=$(sed -n 's/^Name:[[:space:]]*//p' "$_bl_d/status" 2>/dev/null)
+        case "$_bl_name" in
+          gamescope|steam|steamwebhelper|Xwayland)
+            _bl_pid=${_bl_d#/proc/}
+            _bl_ppid=$(sed -n 's/^PPid:[[:space:]]*//p' "$_bl_d/status" 2>/dev/null)
+            _bl_state=$(sed -n 's/^State:[[:space:]]*\([^[:space:]]*\).*/\1/p' "$_bl_d/status" 2>/dev/null)
+            _bl_threads=$(sed -n 's/^Threads:[[:space:]]*//p' "$_bl_d/status" 2>/dev/null)
+            _bl_rss=$(sed -n 's/^VmRSS:[[:space:]]*//p' "$_bl_d/status" 2>/dev/null)
+            printf '%s %s pid=%s ppid=%s state=%s threads=%s rss=%s\n' \
+              "$_bl_now" "$_bl_name" "$_bl_pid" "${_bl_ppid:-?}" "${_bl_state:-?}" "${_bl_threads:-?}" "${_bl_rss:-?}" >> "$out"
+            _bl_seen=1
+            ;;
+        esac
+      done
+      [ "$_bl_seen" = 0 ] && echo "$_bl_now none" >> "$out"
+      sleep 0.5
+    done
+  ) &
+  BL_PROCESS_TRACE_PID=$!
+  echo "== diagnostics: Steam process trace pid $BL_PROCESS_TRACE_PID -> $BL_DEBUG_DIR/processes.log"
+}
+trace_steam_processes
 # The hosted Linux desktop is our recovery/debug path on Mali: keep it independent from
 # libhybris/sysvk until that bridge is proven. LXQt/labwc on pixman need no Vulkan at all.
 if [ "$mode" = lxqt ] && [ "${BL_DESKTOP_SOFTWARE:-0}" = 1 ]; then
