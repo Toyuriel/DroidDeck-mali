@@ -807,10 +807,21 @@ BUSCONF
         echo "$steam_channel" > "$steam_beta"
       fi
       step "starting the Steam client${BL_STEAM_UI:+ ($BL_STEAM_UI UI)}"
+      _bl_cef=(-no-cef-sandbox)
+      if [ "${BL_MALI_ANDROID_VULKAN:-0}" = 1 ]; then
+        # Keep gamescope/games on Vulkan but keep Steam's Chromium UI away from the experimental
+        # Mali Vulkan bridge. steamwebhelper is a separate process and can crash on ANGLE/Vulkan
+        # even when gamescope itself has a working VkDevice. Software CEF is slower but isolates
+        # the UI from that failure without changing Proton/DXVK or the compositor.
+        _bl_cef+=(-cef-disable-gpu -cef-disable-gpu-compositing -cef-ozone-platform=x11)
+        echo "== steam: Mali safe CEF mode (software UI; gamescope/games stay on Vulkan)"
+      else
+        _bl_cef+=(-cef-force-gpu -cef-ozone-platform=x11 -cef-use-gl=angle -cef-use-angle=vulkan)
+      fi
       "$steam_root/steamrtarm64/steam" "${_bl_ui[@]}" -clientbeta "$steam_channel" \
-        -no-cef-sandbox -cef-force-gpu -cef-ozone-platform=x11 \
-        -cef-use-gl=angle -cef-use-angle=vulkan "$@"
+        "${_bl_cef[@]}" "$@"
       rc=$?
+      unset _bl_cef
       echo "== steam exited rc=$rc"
       collect_steam_logs
       if [ -n "${BL_ADDED_GAMES:-}" ] && [ -f "$BL_ADDED_GAMES" ]; then
