@@ -133,7 +133,9 @@ mkdir -p "$STAGE/usr/share/vulkan/implicit_layer.d"
 python3 - "$WSI_INST/VkLayer_window_system_integration.json" \
   "$STAGE/usr/share/vulkan/implicit_layer.d/droiddeck-mali-wsi.json" "$PREFIX" <<'PY'
 import json, pathlib, sys
-src, dst, prefix = map(pathlib.Path, sys.argv[1:3]) + [sys.argv[3]] if False else (pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), sys.argv[3])
+src = pathlib.Path(sys.argv[1])
+dst = pathlib.Path(sys.argv[2])
+prefix = sys.argv[3]
 data = json.loads(src.read_text())
 layer = data["layer"]
 layer["library_path"] = prefix + "/lib/libVkLayer_window_system_integration.so"
