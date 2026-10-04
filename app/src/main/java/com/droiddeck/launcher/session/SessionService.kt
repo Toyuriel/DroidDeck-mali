@@ -305,21 +305,37 @@ class SessionService : Service() {
         // contains a fallback copy. Catalog/network failure is non-fatal when something is installed.
         if (GpuInfo.detect().family == GpuInfo.Family.MALI) {
             val before = MaliSupportPackage.installedVersion(this)
+            SessionEvents.record("startup.mali_support.begin", mapOf("installed" to (before ?: "none")))
+            val startedAt = System.currentTimeMillis()
             val problem = runCatching { MaliSupportPackage.installLatest(this) }.getOrElse {
                 Log.w(TAG, "Mali support auto-update", it)
                 it.message ?: "update failed"
             }
             val after = MaliSupportPackage.installedVersion(this)
+            SessionEvents.record(
+                "startup.mali_support.end",
+                mapOf(
+                    "installed" to (after ?: before ?: "none"),
+                    "problem" to problem,
+                    "elapsedMs" to (System.currentTimeMillis() - startedAt),
+                ),
+            )
             if (problem != null) {
                 Log.w(TAG, "Mali support auto-update: " + problem + "; installed=" + (after ?: before ?: "none"))
             } else {
                 Log.i(TAG, "Mali support ready: " + (after ?: "APK fallback") + " (was " + (before ?: "none") + ")")
             }
         }
-        SessionFiles.stage(this, root)
-
-        val sessionDir = openSessionFolder()
-        val sessionLog = File(sessionDir, "session.log")
+        SessionEvents.record("startup.stage_files.begin")
+        try {
+            SessionFiles.stage(this, root)
+            SessionEvents.record("startup.stage_files.ok")
+        } catch (e: Exception) {
+            Log.e(TAG, "staging session files", e)
+            SessionEvents.fail("STAGE_FILES_FAILED", e.message ?: "could not stage session files")
+            stopSession(-1)
+            return
+        }
 
         Log.i(TAG, GpuClockPin.start(this))
 
