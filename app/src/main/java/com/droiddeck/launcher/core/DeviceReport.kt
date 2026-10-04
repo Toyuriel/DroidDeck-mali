@@ -6,8 +6,10 @@ import android.os.Build
 import android.os.Environment
 import android.os.StatFs
 import android.util.Log
+import com.droiddeck.launcher.BuildConfig
 import com.droiddeck.launcher.gpu.LinuxVulkanDriver
 import com.droiddeck.launcher.gpu.LinuxVulkanDriverManager
+import com.droiddeck.launcher.gpu.MaliSupportPackage
 import com.droiddeck.launcher.gpu.TurnipDriver
 import com.droiddeck.launcher.runtime.DesktopCatalog
 import com.droiddeck.launcher.runtime.LinuxRuntime
@@ -60,6 +62,8 @@ object DeviceReport {
             k("Version", "${info.versionName} (${info.longVersionCode})")
         }
         k("Package", context.packageName)
+        k("Build label", BuildConfig.BUILD_LABEL)
+        k("Source commit", BuildConfig.SOURCE_COMMIT.ifEmpty { "unknown" })
         k("targetSdk", context.applicationInfo.targetSdkVersion)
         k("Native lib dir", context.applicationInfo.nativeLibraryDir)
 
@@ -133,6 +137,9 @@ object DeviceReport {
             k("Linux driver", label)
         }
         k("Runtime's own ICD", LinuxRuntime.vulkanIcd(context)?.path)
+        if (gpu.family == com.droiddeck.launcher.gpu.GpuInfo.Family.MALI) {
+            k("Mali support package", MaliSupportPackage.installedVersion(context) ?: "APK fallback / untracked")
+        }
 
         h("Runtime")
         k("Installed version", LinuxRuntimeInstaller.installedVersion(context))
