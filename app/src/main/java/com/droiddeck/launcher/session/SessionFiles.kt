@@ -125,6 +125,23 @@ object SessionFiles {
             }
             if (!installed) Log.e(TAG, "$relative NOT staged")
         }
+        // Experimental Mali vendor-Vulkan bridge. It is built into assets/linuxfs by CI, but an
+        // already-installed runtime predates the APK, so copy the complete versioned tree on every
+        // session just like the session scripts above. No rootfs re-download is required.
+        val maliBridge = "usr/local/lib/droiddeck-mali"
+        if (runCatching {
+                context.assets.list("linuxfs/usr/local/lib")?.contains("droiddeck-mali") == true
+            }.getOrDefault(false)) {
+            stageLinuxfsAssetTree(context, root, maliBridge)
+            val wsiManifest = "usr/share/vulkan/implicit_layer.d/droiddeck-mali-wsi.json"
+            if (runCatching {
+                    context.assets.list("linuxfs/usr/share/vulkan/implicit_layer.d")
+                        ?.contains("droiddeck-mali-wsi.json") == true
+                }.getOrDefault(false)) {
+                stageLinuxfsAssetTree(context, root, wsiManifest)
+            }
+            Log.i(TAG, "Mali Vulkan bridge refreshed from APK assets")
+        }
         // The DirectAudio driver for games under Proton: the glibc build of winedirectaudio, which
         // the Proton wrappers add to WINEDLLPATH when the session asks for it (BL_DIRECTAUDIO).
         // Staged like the scripts, so a driver fix reaches an installed runtime without re-hosting.
@@ -180,6 +197,36 @@ object SessionFiles {
         if (bigPictureMovieInstalled) {
             ensureStartupMovieDefault(File(root, "root/.local/share/Steam/config/config.vdf"))
         }
+    }
+
+    /**
+     * Recursively copy one assets/linuxfs subtree into the live guest. Android assets do not carry
+     * Unix modes, so files are made world-readable; shared libraries and JSON manifests do not
+     * require the executable bit. Directories are created as needed and every file lands by rename.
+     */
+    private fun stageLinuxfsAssetTree(context: Context, root: File, relative: String) {
+        val assetPath = "linuxfs/$relative"
+        val children = runCatching { context.assets.list(assetPath).orEmpty() }.getOrDefault(emptyArray())
+        if (children.isNotEmpty()) {
+            children.forEach { child -> stageLinuxfsAssetTree(context, root, "$relative/$child") }
+            return
+        }
+        val target = File(root, relative)
+        val staged = File(target.parentFile, target.name + ".staged")
+        var installed = false
+        try {
+            target.parentFile?.mkdirs()
+            context.assets.open(assetPath).use { input ->
+                staged.outputStream().use { output -> FileUtils.copy(input, output) }
+            }
+            installed = staged.setReadable(true, false) && staged.renameTo(target)
+        } catch (e: Exception) {
+            staged.delete()
+            Log.w(TAG, "could not stage Mali bridge asset $relative", e)
+        } finally {
+            if (!installed) staged.delete()
+        }
+        if (!installed) Log.e(TAG, "Mali bridge asset $relative NOT staged")
     }
 
     private fun stageStartupMovie(context: Context, directory: File, name: String): Boolean {
