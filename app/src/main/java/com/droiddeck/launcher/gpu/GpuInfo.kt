@@ -5,7 +5,8 @@ import com.droiddeck.launcher.core.FileUtils
 import java.io.File
 
 /**
- * What GPU this is, in the terms the driver lists are sorted by. KGSL names the model
+ * What GPU this is, in the terms the driver lists are sorted by.
+ * Mali support in this fork is intentionally experimental and uses the system Vulkan path. KGSL names the model
  * ("Adreno740v2", "Adreno825"); the family decides which Turnip builds run on it at all, and the
  * support level is what the app has actually been tested on (Adreno 725 and up) - an Adreno 610
  * may start, but it is not "supported" just because it is a Qualcomm chip.
