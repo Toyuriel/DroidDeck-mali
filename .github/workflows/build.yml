@@ -18,7 +18,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pull-requests: write
 
 concurrency:
@@ -469,6 +469,44 @@ jobs:
           if-no-files-found: error
           retention-days: 30
           compression-level: 0
+
+      - name: Publish downloadable Mali Vulkan support
+        if: ${{ success() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'mali-x8pro-experimental' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          STAGE=$(mktemp -d)
+          mkdir -p "$STAGE/usr/local/lib" "$STAGE/usr/share/vulkan/implicit_layer.d"
+          cp -a app/src/main/assets/linuxfs/usr/local/lib/droiddeck-mali "$STAGE/usr/local/lib/"
+          cp app/src/main/assets/linuxfs/usr/share/vulkan/implicit_layer.d/droiddeck-mali-wsi.json \
+             "$STAGE/usr/share/vulkan/implicit_layer.d/"
+          PKG=droiddeck-mali-support-arm64.tar.zst
+          tar --use-compress-program='zstd -19' -cf "$PKG" -C "$STAGE" .
+          SHA=$(sha256sum "$PKG" | awk '{print $1}')
+          SIZE=$(stat -c %s "$PKG")
+          VERSION="0.1.${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:7}"
+          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/mali-support-latest/$PKG"
+          cat > mali-support.json <<EOF
+          {
+            "version": "$VERSION",
+            "arch": "arm64",
+            "url": "$URL",
+            "sha256": "$SHA",
+            "size": $SIZE
+          }
+          EOF
+          if gh release view mali-support-latest -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload mali-support-latest "$PKG" mali-support.json --clobber -R "$GITHUB_REPOSITORY"
+            gh release edit mali-support-latest -R "$GITHUB_REPOSITORY" \
+              --title "DroidDeck Mali Vulkan Support" \
+              --notes "Experimental guest Vulkan bridge for ARM Mali/MediaTek. Built from commit ${GITHUB_SHA}."
+          else
+            gh release create mali-support-latest "$PKG" mali-support.json -R "$GITHUB_REPOSITORY" \
+              --prerelease --title "DroidDeck Mali Vulkan Support" \
+              --notes "Experimental guest Vulkan bridge for ARM Mali/MediaTek. Built from commit ${GITHUB_SHA}."
+          fi
+          echo "Published Mali support $VERSION ($SIZE bytes, sha256 $SHA)" >> "$GITHUB_STEP_SUMMARY"
 
   sign:
     needs: build
