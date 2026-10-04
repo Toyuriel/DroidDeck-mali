@@ -563,12 +563,19 @@ class SessionService : Service() {
         guest.add("LIBGL_KOPPER_DRI2=true")
         val maliAndroidVulkan = GpuInfo.detect().family == GpuInfo.Family.MALI
         if (maliAndroidVulkan) {
-            // Mali does not use Turnip/Freedreno. The session script selects the packaged
-            // glibc -> libhybris -> Android vendor Vulkan bridge and its Wayland WSI layer.
-            // Keeping every Turnip variable out of the environment is deliberate: a single
-            // freedreno ICD path makes the Vulkan loader stop before it can see the Mali HAL.
-            guest.add("BL_MALI_ANDROID_VULKAN=1")
-            Log.i(TAG, "Mali session: Android vendor Vulkan bridge requested; Turnip/Freedreno disabled")
+            // The Linux desktop itself deliberately stays software-only on Mali. This lets LXQt
+            // and labwc prove the guest/Wayland path independently from the still-experimental
+            // Android-vendor Vulkan bridge. Steam and GPU-launched programs keep using the bridge.
+            if (SessionState.mode == MODE_DESKTOP) {
+                guest.add("BL_MALI_ANDROID_VULKAN=0")
+                guest.add("BL_DESKTOP_SOFTWARE=1")
+                Log.i(TAG, "Mali desktop: Vulkan bridge disabled; forcing software pixman path")
+            } else {
+                // Mali does not use Turnip/Freedreno. The session script selects the packaged
+                // glibc -> libhybris -> Android vendor Vulkan bridge and its Wayland WSI layer.
+                guest.add("BL_MALI_ANDROID_VULKAN=1")
+                Log.i(TAG, "Mali session: Android vendor Vulkan bridge requested; Turnip/Freedreno disabled")
+            }
         } else {
             LinuxRuntime.vulkanIcd(this)?.let { guest.add("VK_ICD_FILENAMES=" + it.path) }
             // An imported glibc Turnip, when one is set (by the user, or by Auto): the session script
