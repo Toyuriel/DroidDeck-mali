@@ -555,13 +555,22 @@ class SessionService : Service() {
         SessionState.logDirectory = sessionDir
         SessionState.sessionId = sessionDir.name
         SessionState.eventsFile = File(sessionDir, "events.jsonl")
-        SessionEvents.record("session.logs_ready", mapOf("logDir" to sessionDir.path))
-        // Written first, so a session that dies in its first second still says what it ran on.
-        DeviceReport.write(this, File(sessionDir, "device.txt"), SessionState.mode)
-        NetworkReport.write(this, File(sessionDir, "network.txt"))
-        // Everything the app decides from here on - the driver it chose, the audio line, a rival
-        // client stopped, the exit status - reaches logcat and nowhere a user can get at. Mirror it.
+        // Capture first. Device/Kbase probing and report generation are diagnostics themselves and
+        // must not be able to erase the only evidence if they fail very early.
         SessionLogCapture.start(File(sessionDir, "app.log"))
+        SessionEvents.record("session.logs_ready", mapOf("logDir" to sessionDir.path))
+        runCatching {
+            DeviceReport.write(this, File(sessionDir, "device.txt"), SessionState.mode)
+        }.onFailure {
+            Log.e(TAG, "device report failed", it)
+            SessionEvents.record("diagnostics.device_report_failed", mapOf("error" to (it.message ?: it.javaClass.simpleName)))
+        }
+        runCatching {
+            NetworkReport.write(this, File(sessionDir, "network.txt"))
+        }.onFailure {
+            Log.e(TAG, "network report failed", it)
+            SessionEvents.record("diagnostics.network_report_failed", mapOf("error" to (it.message ?: it.javaClass.simpleName)))
+        }
         return sessionDir
     }
 
