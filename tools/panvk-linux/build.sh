@@ -10,6 +10,20 @@ HOST="$ROOT/build-host"
 BUILD="$ROOT/build-aarch64"
 
 sudo dpkg --add-architecture arm64
+# Ubuntu publishes arm64 Noble packages on ports.ubuntu.com. Restrict the
+# runner's normal archive/security stanzas to amd64, then add a native arm64
+# ports stanza for the target development libraries.
+if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
+  sudo sed -i '/^Architectures:/d; /^Components:/a Architectures: amd64' /etc/apt/sources.list.d/ubuntu.sources
+fi
+sudo tee /etc/apt/sources.list.d/droiddeck-arm64.sources >/dev/null <<'EOF'
+Types: deb
+URIs: http://ports.ubuntu.com/ubuntu-ports
+Suites: noble noble-updates noble-backports noble-security
+Components: main universe restricted multiverse
+Architectures: arm64
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+EOF
 sudo apt-get update -qq
 sudo apt-get install -y -qq \
   git build-essential gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
