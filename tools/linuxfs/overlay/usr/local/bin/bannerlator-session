@@ -52,6 +52,7 @@ trap 'collect_steam_logs 2>/dev/null || true' TERM INT HUP
 # was the first process to vanish. No command lines or environment variables are recorded.
 trace_steam_processes() {
   [ "$mode" = steam ] || return 0
+  [ -z "${BL_INSIDE:-}" ] || return 0
   [ -n "${BL_DEBUG_DIR:-}" ] || return 0
   (
     out="$BL_DEBUG_DIR/processes.log"
