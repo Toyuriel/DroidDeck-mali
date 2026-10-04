@@ -2,6 +2,8 @@ package com.droiddeck.launcher.session
 
 import android.content.Context
 import android.util.Log
+import com.droiddeck.launcher.BuildConfig
+import com.droiddeck.launcher.core.SessionLogCapture
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
@@ -38,6 +40,19 @@ object SessionEvents {
             SessionState.firstFrameSeen = false
             SessionState.suspended = false
         }
+        try {
+            File(dir, "bootstrap.log").writeText(
+                "DroidDeck early session log\n" +
+                    "build=" + BuildConfig.BUILD_LABEL + " commit=" +
+                    BuildConfig.SOURCE_COMMIT.ifEmpty { "unknown" } + "\n" +
+                    "mode=" + mode + " created=" + System.currentTimeMillis() + "\n\n"
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "creating bootstrap log", e)
+        }
+        // Start logcat here, before runtime/component preparation. A failure before the service
+        // opens session.log must still leave something the user can share.
+        SessionLogCapture.start(File(dir, "app.log"))
         record("session.created", mapOf("mode" to mode), dir)
     }
 
@@ -70,6 +85,20 @@ object SessionEvents {
                 target.parentFile?.mkdirs()
                 FileOutputStream(target, true).use { stream ->
                     stream.write((payload.toString() + "\n").toByteArray(Charsets.UTF_8))
+                }
+                // Human-readable early timeline. This is deliberately separate from session.log:
+                // it is written by Android even when the guest never starts.
+                val boot = File(dir, "bootstrap.log")
+                FileOutputStream(boot, true).bufferedWriter().use { w ->
+                    w.append(System.currentTimeMillis().toString())
+                    w.append("  ").append(event)
+                    if (fields.isNotEmpty()) {
+                        w.append("  ")
+                        w.append(fields.entries.joinToString(" ") { entry ->
+                            entry.key + "=" + (entry.value?.toString() ?: "null")
+                        })
+                    }
+                    w.newLine()
                 }
             }
         } catch (e: Exception) {
