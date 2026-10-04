@@ -862,4 +862,10 @@
     <string name="game_env_change_title">Cambiar variable</string>
     <string name="game_env_restore_default">Volver al predeterminado</string>
     <string name="game_env_eyebrow">Juegos de Proton</string>
+    <string name="gpu_mali_support_title">Soporte Vulkan para Mali</string>
+    <string name="gpu_mali_support_hint">Puente del runtime para Mali: sysvk + libhybris + WSI de Wayland.</string>
+    <string name="gpu_mali_support_installed">Instalado: %1$s</string>
+    <string name="gpu_mali_support_missing">Aún no está instalado</string>
+    <string name="gpu_mali_support_get">Descargar / actualizar</string>
+    <string name="gpu_mali_support_busy">Instalando soporte Mali…</string>
 </resources>
