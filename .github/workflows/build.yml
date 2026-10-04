@@ -28,7 +28,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  PRELOAD_CACHE_VERSION: v2
+  PRELOAD_CACHE_VERSION: v3-mali-bridge1
   DROIDDECK_UPSTREAM_REPO: Droid-Deck/DroidDeck
 
 jobs:
@@ -36,7 +36,7 @@ jobs:
     name: Build APK
     if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 75
     outputs:
       variants: ${{ steps.variants.outputs.list }}
     steps:
@@ -158,7 +158,13 @@ jobs:
         uses: actions/cache@v4
         with:
           path: app/src/main/assets/linuxfs
-          key: preloads-${{ env.PRELOAD_CACHE_VERSION }}-${{ hashFiles('app/src/main/cpp/fakeinput_steam.cpp', 'tools/linuxfs/preload/*.c', 'tools/linuxfs/clipboard/*.c', 'tools/proot/fastpath/*.c', 'tools/linuxfs/overlay/usr/local/bin/*', 'tools/linuxfs/overlay/usr/bin/**', 'tools/linuxfs/desktop/*', 'tools/gamescope/release.env', 'tools/wlroots/release.env', 'tools/mangoapp/*') }}
+          key: preloads-${{ env.PRELOAD_CACHE_VERSION }}-${{ hashFiles('app/src/main/cpp/fakeinput_steam.cpp', 'tools/linuxfs/preload/*.c', 'tools/linuxfs/clipboard/*.c', 'tools/proot/fastpath/*.c', 'tools/linuxfs/overlay/usr/local/bin/*', 'tools/linuxfs/overlay/usr/bin/**', 'tools/linuxfs/desktop/*', 'tools/gamescope/release.env', 'tools/wlroots/release.env', 'tools/mangoapp/*', 'tools/mali-bridge/**') }}
+
+      - name: Set up ARM64 emulation for the Mali bridge
+        if: steps.preloads.outputs.cache-hit != 'true'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
 
       - name: Build libfakeinput.so and libblsession.so (glibc aarch64)
         if: steps.preloads.outputs.cache-hit != 'true'
@@ -233,6 +239,18 @@ jobs:
           install -Dm644 tools/linuxfs/desktop/panel.conf "$D/etc/xdg/lxqt/panel.conf"
           install -Dm644 tools/linuxfs/desktop/firefox-droiddeck.js "$D/usr/lib/firefox/defaults/pref/droiddeck.js"
           ls -lR "$D"
+
+      - name: Build experimental Mali Android-Vulkan bridge
+        if: steps.preloads.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          docker run --rm --platform linux/arm64 \
+            -v "$PWD:/src" -w /src ubuntu:24.04 \
+            bash tools/mali-bridge/build-in-arm64.sh
+          test -f app/src/main/assets/linuxfs/usr/local/lib/droiddeck-mali/lib/libsysvk.so
+          test -f app/src/main/assets/linuxfs/usr/local/lib/droiddeck-mali/lib/libhardware.so
+          test -f app/src/main/assets/linuxfs/usr/local/lib/droiddeck-mali/lib/libVkLayer_window_system_integration.so
+          test -f app/src/main/assets/linuxfs/usr/share/vulkan/implicit_layer.d/droiddeck-mali-wsi.json
 
       - name: Cache PulseAudio 13.0 source
         id: pa-src
