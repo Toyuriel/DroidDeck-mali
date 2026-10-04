@@ -66,8 +66,10 @@ from pathlib import Path
 
 tls = Path("hybris/common/q/linker_tls.cpp")
 asm = Path("hybris/common/q/tlsdesc_resolver.S")
+hooks = Path("hybris/common/hooks.c")
 t = tls.read_text()
 a = asm.read_text()
+h = hooks.read_text()
 
 if "__hybris_static_tls_address" not in t:
     raise SystemExit("TLS sidecar C++ hunk did not apply")
@@ -94,8 +96,44 @@ if len(positions) == 2:
 elif len(positions) != 1:
     raise SystemExit(f"Unexpected SAVE_REG macro count after TLS patch: {len(positions)}")
 
+# libhybris PR #543: Mali blobs on Android 12+ may scan pthread TLS relative to TP and
+# otherwise fall back to TLS_SLOT_OPENGL, corrupting memory. Supply a stable initial-exec
+# TLS slot through the symbol the Mali blob probes for.
+if "_hybris_hook_MEOW_get_tls_meow_offset" not in h:
+    func = r'''
+/*
+ * Mali TLS workaround from libhybris PR #543. Some recent Mali userspace probes
+ * MEOW_get_tls_meow_offset() before scanning Bionic pthread TLS. glibc lays its
+ * pthread TLS out differently, so give the driver a safe static TLS offset.
+ */
+#ifdef MALI_QUIRKS
+static ssize_t _hybris_hook_MEOW_get_tls_meow_offset(void)
+{
+    static __thread __attribute__((tls_model ("initial-exec")))
+        void *meow_tls_storage = NULL;
+    ssize_t offset = (char *)&meow_tls_storage - (char *)__builtin_thread_pointer();
+    TRACE("MEOW tls offset = %zd", offset);
+    return offset;
+}
+#endif
+
+'''
+    needle = "// old property hooks for pre-android 8 approach"
+    if needle not in h:
+        raise SystemExit("Could not locate Mali TLS function insertion point")
+    h = h.replace(needle, func + needle, 1)
+
+hook_line = "    HOOK_INDIRECT(MEOW_get_tls_meow_offset),"
+if hook_line not in h:
+    needle = "    HOOK_INDIRECT(__fpurge),\n};"
+    repl = "    HOOK_INDIRECT(__fpurge),\n#ifdef MALI_QUIRKS\n" + hook_line + "\n#endif\n};"
+    if needle not in h:
+        raise SystemExit("Could not locate Mali TLS hook table insertion point")
+    h = h.replace(needle, repl, 1)
+
 asm.write_text(a)
-print("TLS sidecar patch normalized: functional hunks present, one macro block")
+hooks.write_text(h)
+print("TLS patches normalized: static sidecar + Mali MEOW hook")
 PY
 )
 (
@@ -200,7 +238,7 @@ libhybris $LIBHYBRIS_SHA
 sysvk $SYSVK_SHA
 vulkan-wsi-layer $WSI_SHA
 Vulkan-Headers $VULKAN_HEADERS_SHA
-droiddeck-patches tls-sidecar-v2
+droiddeck-patches tls-sidecar-v3-meow
 EOF
 
 echo "== Mali bridge: dependency audit"
