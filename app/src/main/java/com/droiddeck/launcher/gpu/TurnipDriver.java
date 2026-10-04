@@ -60,7 +60,8 @@ public final class TurnipDriver {
 
     public static final String HELP_TEXT =
             "The driver the app's compositor puts frames on the screen with - the last step of every "
-            + "session, Steam or desktop. AdrenoTools zips only (vulkan.adXXXX.so): a \"-Linux\" Turnip "
+            + "session, Steam or desktop. Adreno uses Turnip; experimental Mali uses Android system Vulkan. "
+            + "AdrenoTools zips only (vulkan.adXXXX.so): a \"-Linux\" Turnip "
             + "belongs in the Linux runtime list above and is refused here. The compositor loads its "
             + "driver once per app process, so a change takes effect after the app is fully closed and "
             + "started again.";
@@ -312,6 +313,16 @@ public final class TurnipDriver {
      * and falls through, so a stale preference never blocks a session.
      */
     private String choose() {
+        GpuInfo gpu = GpuInfo.Companion.detect();
+        if (gpu.getFamily() == GpuInfo.Family.MALI) {
+            Log.w(TAG, "experimental Mali detected (" + gpu.getName()
+                    + "): refusing AdrenoTools/Turnip and using Android system Vulkan");
+            return null;
+        }
+        if (gpu.getFamily() == GpuInfo.Family.NOT_ADRENO) {
+            Log.w(TAG, "non-Adreno GPU detected (" + gpu.getName() + "): using Android system Vulkan");
+            return null;
+        }
         String chosen = SessionPrefs.androidDriver(context);
         if (chosen != null && !chosen.isEmpty()) {
             if (BUNDLED.contains(chosen)) {
@@ -348,7 +359,10 @@ public final class TurnipDriver {
                 if (generation == '7') return DRIVER_A7XX;
             }
         }
-        // Nothing to go on: Android 16 shipped with the 8 Elite, so treat a new device as 8xx.
+        // Safety: never guess an Adreno Turnip generation for a non-Adreno GPU.
+        GpuInfo gpu = GpuInfo.Companion.detect();
+        if (gpu.getFamily() == GpuInfo.Family.MALI || gpu.getFamily() == GpuInfo.Family.NOT_ADRENO) return null;
+        // Nothing to go on on Adreno: Android 16 shipped with the 8 Elite, so treat a new device as 8xx.
         return android.os.Build.VERSION.SDK_INT >= 36 ? DRIVER_A8XX : DRIVER_A7XX;
     }
 
