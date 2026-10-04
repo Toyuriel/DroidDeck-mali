@@ -30,9 +30,9 @@ int vk_loader_open(const char *driver_path, const char *library_name,
     }
     if (!g_handle) {
         g_handle = dlopen("libvulkan.so", RTLD_LOCAL | RTLD_NOW);
-        __android_log_print(ANDROID_LOG_WARN, TAG,
-                            "no adrenotools driver -> system libvulkan handle=%p "
-                            "(dmabuf import likely unsupported)", g_handle);
+        __android_log_print(g_handle ? ANDROID_LOG_INFO : ANDROID_LOG_ERROR, TAG,
+                            "using Android system Vulkan loader handle=%p "
+                            "(expected on experimental Mali path)", g_handle);
     }
     if (!g_handle) return -1;
     g_gip = (PFN_vkGetInstanceProcAddr)dlsym(g_handle, "vkGetInstanceProcAddr");
