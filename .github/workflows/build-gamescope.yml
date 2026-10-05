@@ -7,7 +7,10 @@ name: Build gamescope (patched)
 on:
   push:
     paths:
-      - 'tools/gamescope/**'
+      - 'tools/gamescope/build-in-arch.sh'
+      - 'tools/gamescope/patches/**'
+      - 'tools/gamescope/patch-nested-drm.py'
+      - 'tools/gamescope/runtime-sonames.txt'
       - '.github/workflows/build-gamescope.yml'
   workflow_dispatch:
     inputs:
