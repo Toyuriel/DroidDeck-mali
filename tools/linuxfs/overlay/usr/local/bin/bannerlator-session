@@ -894,14 +894,14 @@ BUSCONF
       step "starting the Steam client${BL_STEAM_UI:+ ($BL_STEAM_UI UI)}"
       _bl_cef=(-no-cef-sandbox)
       if [ "${BL_MALI_ANDROID_VULKAN:-0}" = 1 ]; then
-        # PanVK now provides XCB/Xlib WSI on the G720 path. The old GLX fallback made Chromium
-        # render through Mesa llvmpipe because this runtime does not ship a Panfrost OpenGL
-        # driver; under Xwayland that path also fails AcquirePixmap with BadMatch/BadDrawable/
-        # GLXBadPixmap and makes Steam's UI flicker between views. Keep Ozone on X11 (Steam and
-        # gamescope expect that integration) but run ANGLE on the same PanVK Vulkan device used
-        # by gamescope. Games/Proton retain the session Vulkan environment unchanged.
-        _bl_cef+=(-cef-force-gpu -cef-ozone-platform=x11 -cef-use-gl=angle -cef-use-angle=vulkan)
-        echo "== steam: Mali CEF mode = ANGLE/Vulkan on PanVK (X11 Ozone)"
+        # Steam's ARM64 CEF still creates a GLX browser-compositor surface under Xwayland even
+        # when ANGLE/Vulkan is requested. On Mali/PanVK that hybrid path repeatedly fails
+        # AcquirePixmap (BadDrawable/GLXBadPixmap) and the visible Gamepad UI flashes as the GPU
+        # process is recreated. libblsession's steamwebhelper_gl preload already isolates only
+        # steamwebhelper onto llvmpipe, so let CEF use its native X11/GL path here instead of
+        # overriding it back to ANGLE/Vulkan. Gamescope, Steam games and Proton keep PanVK.
+        _bl_cef+=(-cef-ozone-platform=x11 -cef-use-gl=desktop)
+        echo "== steam: Mali CEF mode = isolated llvmpipe GLX (games remain on PanVK)"
       else
         _bl_cef+=(-cef-force-gpu -cef-ozone-platform=x11 -cef-use-gl=angle -cef-use-angle=vulkan)
       fi
