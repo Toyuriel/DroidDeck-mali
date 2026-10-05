@@ -46,20 +46,7 @@ _droiddeck_prepare() {
 
   # Kbase-backed PanVK has no DRM render/primary node. Nested Wayland is not
   # session-based and does not require DRM identity, so bypass only that check.
-  python3 - <<'PY'
-from pathlib import Path
-p = Path("src/rendervulkan.cpp")
-s = p.read_text()
-needle = "\\tif ( !hasDrmProps ) {"
-if needle not in s:
-    raise SystemExit("gamescope DRM identity anchor not found")
-replacement = """\\tif ( !GetBackend()->IsSessionBased() ) {
-\\t\\tvk_log.infof( "skipping DRM node identity for non-session backend" );
-\\t} else if ( !hasDrmProps ) {"""
-s = s.replace(needle, replacement, 1)
-p.write_text(s)
-print("DroidDeck: nested Wayland DRM identity check patched")
-PY
+  python3 /work/tools/gamescope/patch-nested-drm.py src/rendervulkan.cpp
 }
 if declare -f prepare >/dev/null; then
   eval \"\$(declare -f prepare | sed 's/^prepare ()/_arch_prepare ()/')\"
