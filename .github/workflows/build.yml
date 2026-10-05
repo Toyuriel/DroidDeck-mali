@@ -346,6 +346,13 @@ jobs:
           restore-keys: |
             cxx-${{ env.NDK_VERSION }}-
 
+      - name: Validate session and Mali scripts
+        run: |
+          set -euo pipefail
+          bash -n tools/linuxfs/overlay/usr/local/bin/bannerlator-session
+          bash -n tools/panvk-linux/build.sh
+          bash -n tools/mali-bridge/build-in-arm64.sh
+
       - name: Build
         id: build
         env:
