@@ -104,66 +104,92 @@ fi
 # Qualcomm keeps the existing Turnip/Freedreno path below.
 if [ "${BL_MALI_ANDROID_VULKAN:-0}" = 1 ]; then
   bl_mali_root=/usr/local/lib/droiddeck-mali
-  bl_mali_icd="$bl_mali_root/share/vulkan/icd.d/sysvk.json"
-  bl_mali_sysvk="$bl_mali_root/lib/libsysvk.so"
-  bl_mali_hardware="$bl_mali_root/lib/libhardware.so"
-  bl_mali_wsi="$bl_mali_root/lib/libVkLayer_window_system_integration.so"
-  bl_mali_linker="$bl_mali_root/lib/libhybris/linker"
+  bl_panvk_icd="$bl_mali_root/panvk/panfrost_icd.json"
+  bl_panvk_so="$bl_mali_root/panvk/libvulkan_panfrost.so"
+  bl_mali_panvk_ok=0
 
-  bl_mali_missing=
-  for bl_mali_need in "$bl_mali_icd" "$bl_mali_sysvk" "$bl_mali_hardware" "$bl_mali_wsi" "$bl_mali_linker"; do
-    [ -e "$bl_mali_need" ] || bl_mali_missing="$bl_mali_missing $bl_mali_need"
-  done
-  if [ -n "$bl_mali_missing" ]; then
-    echo "== ERROR Mali Vulkan bridge is incomplete; missing:$bl_mali_missing"
-    exit 78
-  fi
+  # Preferred path on Kbase/CSF devices: native glibc PanVK. Android owns /dev/mali0 and
+  # hands PanVK a fresh Kbase fd over an abstract AF_UNIX socket, so PRoot never has to
+  # bind the character device into the guest.
+  if [ "${BL_MALI_PANVK:-0}" = 1 ] && [ -n "${PANVK_KBASE_FD_SOCKET:-}" ] \
+     && [ -r "$bl_panvk_icd" ] && [ -r "$bl_panvk_so" ]; then
+    unset BL_VK_DRIVER TU_DEBUG DROIDDECK_MALI_WSI
+    unset HYBRIS_LINKER_DIR HYBRIS_LD_LIBRARY_PATH HYBRIS_PTHREAD_RAW_EXIT HYBRIS_LD_DEBUG
+    export VK_DRIVER_FILES="$bl_panvk_icd"
+    export VK_ICD_FILENAMES="$bl_panvk_icd"
+    export PANVK_DEBUG="${PANVK_DEBUG:-startup,kbase_diag}"
+    echo "== vulkan driver: native PanVK Kbase/CSF, ICD=$VK_DRIVER_FILES"
+    echo "== kbase broker: abstract socket $PANVK_KBASE_FD_SOCKET"
+    echo "== panvk library: $bl_panvk_so"
 
-  # Never allow a stale Qualcomm choice to override the Mali bridge.
-  unset BL_VK_DRIVER TU_DEBUG VK_DRIVER_FILES VK_ICD_FILENAMES
-  export HYBRIS_LINKER_DIR="$bl_mali_linker"
-  export HYBRIS_LD_LIBRARY_PATH="/system/lib64:/system_ext/lib64:/product/lib64:/vendor/lib64:/vendor/lib64/egl:/vendor/lib64/hw:/odm/lib64:/apex/com.android.runtime/lib64/bionic"
-  export HYBRIS_PTHREAD_RAW_EXIT=1
-  export HYBRIS_LD_DEBUG=-1
-  export LD_LIBRARY_PATH="$bl_mali_root/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-  export VK_DRIVER_FILES="$bl_mali_icd"
-  export VK_ICD_FILENAMES="$bl_mali_icd"
-  # The implicit layer manifest has enable_environment for this switch, so it is invisible on Adreno.
-  export DROIDDECK_MALI_WSI=1
-  echo "== vulkan driver: Mali Android HAL bridge (sysvk + libhybris), ICD=$VK_DRIVER_FILES"
-  echo "== vulkan WSI: Wayland bridge $bl_mali_wsi"
-  echo "== mali devices: $(ls /dev/mali* 2>/dev/null | tr '\n' ' ' || true)"
-  if [ -e /dev/mali0 ]; then
-    echo "== kbase guest node: $(stat -c '%F mode=%a major=%t minor=%T' /dev/mali0 2>/dev/null || echo present)"
-    if ( exec 9<>/dev/mali0 ) 2>/dev/null; then
-      echo "== kbase guest open: PASS"
-      exec 9>&- 2>/dev/null || true
+    if command -v vulkaninfo >/dev/null 2>&1; then
+      bl_panvk_probe=$(mktemp)
+      if timeout 20s vulkaninfo --summary >"$bl_panvk_probe" 2>&1; then
+        bl_mali_panvk_ok=1
+        echo "== PanVK Vulkan probe: PASS"
+        head -120 "$bl_panvk_probe"
+      else
+        bl_panvk_rc=$?
+        echo "== WARNING PanVK Vulkan probe failed rc=$bl_panvk_rc; falling back to Android vendor bridge"
+        head -160 "$bl_panvk_probe"
+      fi
+      rm -f "$bl_panvk_probe"
     else
-      echo "== kbase guest open: FAIL"
+      # No probe utility: let gamescope perform the first real VkDevice creation.
+      bl_mali_panvk_ok=1
+      echo "== PanVK Vulkan probe: vulkaninfo unavailable; gamescope will be the probe"
     fi
   else
-    echo "== kbase guest node: MISSING"
+    echo "== PanVK unavailable: package or Kbase broker missing; using Android vendor bridge"
   fi
-  echo "== dma heaps: $(ls /dev/dma_heap 2>/dev/null | tr '\n' ' ' || true)"
 
-  # A clean identity check is much easier to diagnose than gamescope's later 'no physical device'.
-  # Not every runtime ships vulkaninfo, so absence of the utility is not itself a launch failure.
-  if command -v vulkaninfo >/dev/null 2>&1; then
-    bl_mali_probe=$(mktemp)
-    if timeout 15s vulkaninfo --summary >"$bl_mali_probe" 2>&1; then
-      echo "== Mali Vulkan probe: PASS"
-      head -80 "$bl_mali_probe"
-    else
-      bl_mali_rc=$?
-      echo "== WARNING Mali Vulkan probe failed rc=$bl_mali_rc; continuing to gamescope"
-      echo "== The probe can crash during vendor-driver teardown even when a long-lived compositor works."
-      head -120 "$bl_mali_probe"
+  if [ "$bl_mali_panvk_ok" != 1 ]; then
+    bl_mali_icd="$bl_mali_root/share/vulkan/icd.d/sysvk.json"
+    bl_mali_sysvk="$bl_mali_root/lib/libsysvk.so"
+    bl_mali_hardware="$bl_mali_root/lib/libhardware.so"
+    bl_mali_wsi="$bl_mali_root/lib/libVkLayer_window_system_integration.so"
+    bl_mali_linker="$bl_mali_root/lib/libhybris/linker"
+
+    bl_mali_missing=
+    for bl_mali_need in "$bl_mali_icd" "$bl_mali_sysvk" "$bl_mali_hardware" "$bl_mali_wsi" "$bl_mali_linker"; do
+      [ -e "$bl_mali_need" ] || bl_mali_missing="$bl_mali_missing $bl_mali_need"
+    done
+    if [ -n "$bl_mali_missing" ]; then
+      echo "== ERROR Mali Vulkan support is incomplete; missing:$bl_mali_missing"
+      exit 78
     fi
-    rm -f "$bl_mali_probe"
-  else
-    echo "== Mali Vulkan probe: vulkaninfo is not installed; gamescope will be the probe"
+
+    unset BL_VK_DRIVER TU_DEBUG VK_DRIVER_FILES VK_ICD_FILENAMES PANVK_DEBUG
+    export HYBRIS_LINKER_DIR="$bl_mali_linker"
+    export HYBRIS_LD_LIBRARY_PATH="/system/lib64:/system_ext/lib64:/product/lib64:/vendor/lib64:/vendor/lib64/egl:/vendor/lib64/hw:/odm/lib64:/apex/com.android.runtime/lib64/bionic"
+    export HYBRIS_PTHREAD_RAW_EXIT=1
+    export HYBRIS_LD_DEBUG=-1
+    export LD_LIBRARY_PATH="$bl_mali_root/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    export VK_DRIVER_FILES="$bl_mali_icd"
+    export VK_ICD_FILENAMES="$bl_mali_icd"
+    export DROIDDECK_MALI_WSI=1
+    echo "== vulkan driver: Mali Android HAL bridge fallback (sysvk + libhybris), ICD=$VK_DRIVER_FILES"
+    echo "== vulkan WSI: Wayland bridge $bl_mali_wsi"
+    echo "== mali devices: $(ls /dev/mali* 2>/dev/null | tr '\n' ' ' || true)"
+    echo "== dma heaps: $(ls /dev/dma_heap 2>/dev/null | tr '\n' ' ' || true)"
+
+    if command -v vulkaninfo >/dev/null 2>&1; then
+      bl_mali_probe=$(mktemp)
+      if timeout 15s vulkaninfo --summary >"$bl_mali_probe" 2>&1; then
+        echo "== Mali vendor Vulkan probe: PASS"
+        head -80 "$bl_mali_probe"
+      else
+        bl_mali_rc=$?
+        echo "== WARNING Mali vendor Vulkan probe failed rc=$bl_mali_rc; continuing to gamescope"
+        head -120 "$bl_mali_probe"
+      fi
+      rm -f "$bl_mali_probe"
+    fi
   fi
-  unset bl_mali_need bl_mali_missing bl_mali_root bl_mali_icd bl_mali_sysvk bl_mali_hardware bl_mali_wsi bl_mali_linker
+
+  unset bl_panvk_probe bl_panvk_rc bl_mali_need bl_mali_missing
+  unset bl_mali_icd bl_mali_sysvk bl_mali_hardware bl_mali_wsi bl_mali_linker
+  unset bl_panvk_icd bl_panvk_so bl_mali_root bl_mali_panvk_ok
 elif [ -n "${BL_VK_DRIVER:-}" ]; then
   bl_icd_lib=$(sed -n 's/.*"library_path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$BL_VK_DRIVER" 2>/dev/null | head -1)
   # JSON may escape the separator: org.json writes "\/data\/user\/0\/...". The Vulkan loader
