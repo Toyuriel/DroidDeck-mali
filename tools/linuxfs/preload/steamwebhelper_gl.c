@@ -29,12 +29,23 @@ static void droiddeck_steamwebhelper_software_gl(void) {
   if (!is_mali_session() || name == NULL || strcmp(name, "steamwebhelper") != 0)
     return;
 
+  /*
+   * Nested gamescope exports ENABLE_GAMESCOPE_WSI=1 to every child.  Its
+   * implicit Vulkan layer is useful for games, but not for CEF: on this Mali
+   * path it makes steamwebhelper probe PanVK before Chromium's X11 software
+   * compositor is ready, mixing PanVK shared images with llvmpipe/GLX.
+   * The layer's own manifest recognizes DISABLE_GAMESCOPE_WSI=1.
+   */
+  unsetenv("ENABLE_GAMESCOPE_WSI");
+  setenv("DISABLE_GAMESCOPE_WSI", "1", 1);
+
   setenv("LIBGL_ALWAYS_SOFTWARE", "1", 1);
   unsetenv("MESA_LOADER_DRIVER_OVERRIDE");
   setenv("GALLIUM_DRIVER", "llvmpipe", 1);
+  setenv("LIBGL_KOPPER_DISABLE", "true", 1);
   setenv("MESA_NO_ERROR", "1", 0);
 
   static const char msg[] =
-      "DroidDeck: steamwebhelper uses llvmpipe GL; games remain on PanVK\n";
+      "DroidDeck: steamwebhelper uses llvmpipe GL with Gamescope WSI disabled; games remain on PanVK\n";
   (void) write(STDERR_FILENO, msg, sizeof(msg) - 1);
 }
