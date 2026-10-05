@@ -894,13 +894,14 @@ BUSCONF
       step "starting the Steam client${BL_STEAM_UI:+ ($BL_STEAM_UI UI)}"
       _bl_cef=(-no-cef-sandbox)
       if [ "${BL_MALI_ANDROID_VULKAN:-0}" = 1 ]; then
-        # Chromium still starts a SwiftShader GPU process even with -cef-disable-gpu. On this
-        # Kbase/PanVK stack that software path tries ANGLE/Vulkan and dies while requesting
-        # VK_KHR_xcb_surface, causing steamwebhelper to restart forever before the first frame.
-        # Force Steam's own CEF shell onto GLX/X11 instead. This does not change gamescope's
-        # already-running PanVK device, and Proton/DXVK keep the session Vulkan environment.
-        _bl_cef+=(-cef-force-gpu -cef-force-glx -cef-ozone-platform=x11)
-        echo "== steam: Mali CEF mode = GLX/X11 (gamescope/games remain on PanVK)"
+        # PanVK now provides XCB/Xlib WSI on the G720 path. The old GLX fallback made Chromium
+        # render through Mesa llvmpipe because this runtime does not ship a Panfrost OpenGL
+        # driver; under Xwayland that path also fails AcquirePixmap with BadMatch/BadDrawable/
+        # GLXBadPixmap and makes Steam's UI flicker between views. Keep Ozone on X11 (Steam and
+        # gamescope expect that integration) but run ANGLE on the same PanVK Vulkan device used
+        # by gamescope. Games/Proton retain the session Vulkan environment unchanged.
+        _bl_cef+=(-cef-force-gpu -cef-ozone-platform=x11 -cef-use-gl=angle -cef-use-angle=vulkan)
+        echo "== steam: Mali CEF mode = ANGLE/Vulkan on PanVK (X11 Ozone)"
       else
         _bl_cef+=(-cef-force-gpu -cef-ozone-platform=x11 -cef-use-gl=angle -cef-use-angle=vulkan)
       fi
