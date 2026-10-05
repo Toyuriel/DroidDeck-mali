@@ -342,14 +342,14 @@ class SessionService : Service() {
 
         val size = SessionState.outputSize
         val guest = ArrayList<String>()
+        var maliPanvkSocket: String? = null
 
         if (GpuInfo.detect().family == GpuInfo.Family.MALI && SessionState.mode != MODE_DESKTOP) {
             val socketName = "droiddeck-kbase-" + android.os.Process.myPid() + "-" + gen
             val broker = MaliKbaseFdBroker(socketName)
             broker.attach(this)
             components.add(broker)
-            guest.add("PANVK_KBASE_FD_SOCKET=" + socketName)
-            guest.add("BL_MALI_PANVK=1")
+            maliPanvkSocket = socketName
             SessionEvents.record("mali.kbase_broker.configured", mapOf("socket" to socketName))
             Log.i(TAG, "Mali PanVK Kbase broker configured: $socketName")
         }
@@ -357,6 +357,12 @@ class SessionService : Service() {
         // same set-up as a Steam session: it gets what the client and its games are started with.
         val steamHere = SessionState.mode == MODE_STEAM || SessionState.mode == MODE_DESKTOP
         addClientEnvironment(guest, steamHere)
+        maliPanvkSocket?.let { socketName ->
+            // Guest environment entries must come after /usr/bin/env -i. Placing them before it
+            // makes PRoot treat NAME=value as the executable and exit before bannerlator-session.
+            guest.add("PANVK_KBASE_FD_SOCKET=" + socketName)
+            guest.add("BL_MALI_PANVK=1")
+        }
         // Where the fast path's description of proot's view goes, once the binds are known.
         val fastPathAt = guest.size
 
