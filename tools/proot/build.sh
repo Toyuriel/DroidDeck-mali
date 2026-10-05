@@ -33,6 +33,41 @@ fetch talloc.tar.gz "https://www.samba.org/ftp/talloc/talloc-${TALLOC_VERSION}.t
 for patch in "$HERE"/patches/*.patch; do
   patch -d "$WORK/proot" -p1 --forward --quiet < "$patch"
 done
+
+# Steam's updater uses renameat2(..., flags=0) for ordinary backup renames.
+# Android's app seccomp policy can answer ENOSYS for renameat2 before the host
+# kernel executes it. After every regular PRoot patch has been applied, rewrite
+# only the plain flags=0 form to the ABI-compatible renameat syscall. Doing this
+# as a final source transform avoids patch-context conflicts with the other
+# enter.c performance patches.
+python3 - "$WORK/proot/src/syscall/enter.c" <<'PY'
+from pathlib import Path
+import sys
+
+p = Path(sys.argv[1])
+s = p.read_text()
+needle = """\t\tstatus = translate_path2(tracee, newdirfd, newpath, SYSARG_4, SYMLINK);
+\t\tbreak;
+
+\tcase PR_symlink:
+"""
+replacement = """\t\tstatus = translate_path2(tracee, newdirfd, newpath, SYSARG_4, SYMLINK);
+\t\tif (status < 0)
+\t\t\tbreak;
+
+\t\tif (syscall_number == PR_renameat2
+\t\t    && peek_reg(tracee, CURRENT, SYSARG_5) == 0)
+\t\t\tset_sysnum(tracee, PR_renameat);
+
+\t\tbreak;
+
+\tcase PR_symlink:
+"""
+if needle not in s:
+    raise SystemExit("renameat2 compatibility anchor not found in final PRoot enter.c")
+p.write_text(s.replace(needle, replacement, 1))
+print("DroidDeck: renameat2(flags=0) -> renameat compatibility enabled")
+PY
 mkdir -p "$WORK/talloc/config"
 cp "$HERE/talloc-config.h" "$WORK/talloc/config/config.h"
 "$CC" -c -O2 -fPIC -ffile-prefix-map="$WORK"=. -D__STDC_WANT_LIB_EXT1__=1 -DHAVE_CONFIG_H \
