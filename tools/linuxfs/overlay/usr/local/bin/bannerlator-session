@@ -906,9 +906,8 @@ BUSCONF
           -cef-force-gpu
           -cef-disable-occlusion
           -cef-no-restart-on-ui-mode-change
-          -cef-force-opaque-backgrounds
         )
-        echo "== steam: Mali CEF mode = X11 + ANGLE/GL on isolated llvmpipe (PanVK reserved for games)"
+        echo "== steam: Mali CEF mode = X11 + ANGLE/GL llvmpipe, shared-image fallbacks enabled (PanVK reserved for games)"
       else
         unset BL_STEAM_CEF_ISOLATED BL_STEAM_CEF_WAYLAND
         _bl_cef+=(-cef-force-gpu -cef-ozone-platform=x11 -cef-use-gl=angle -cef-use-angle=vulkan)
