@@ -1,13 +1,20 @@
 diff --git a/src/rendervulkan.cpp b/src/rendervulkan.cpp
+index 0000000..1111111 100644
 --- a/src/rendervulkan.cpp
 +++ b/src/rendervulkan.cpp
-@@
--		vk_log.errorf( "physical device doesn't support VK_EXT_physical_device_drm" );
--		return false;
-+		if ( GetBackend()->IsSessionBased() )
-+		{
-+			vk_log.errorf( "physical device doesn't support VK_EXT_physical_device_drm" );
-+			return false;
-+		}
-+
-+		vk_log.infof( "physical device doesn't support VK_EXT_physical_device_drm; backend does not require DRM identity" );
+@@ -463,11 +463,15 @@ bool CVulkanDevice::createDevice()
+ 
+ 	vk_log.infof( "physical device %s DRM format modifiers", m_bSupportsModifiers ? "supports" : "does not support" );
+ 
+ 	if ( !hasDrmProps ) {
+ 		// This could happen when e.g. running the lavapipe driver
+ 		// (without an actual physical device)
+ 		vk_log.warnf( "physical device doesn't support VK_EXT_physical_device_drm" );
++	} else if ( !GetBackend()->IsSessionBased() ) {
++		// Nested Wayland does not need a DRM render/primary identity. Kbase-backed
++		// PanVK intentionally has no DRM node even though the Vulkan device is real.
++		vk_log.infof( "skipping DRM node identity for non-session backend" );
+ 	} else {
+ #if HAVE_DRM
+ 		VkPhysicalDeviceDrmPropertiesEXT drmProps = {
+ 			.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRM_PROPERTIES_EXT,
