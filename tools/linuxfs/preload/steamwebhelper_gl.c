@@ -103,12 +103,13 @@ static void reexec_with_wayland_llvmpipe(void) {
   }
 
   /*
-   * Eight Chromium switches plus NULL. Xwayland in the Android guest has no DRI3, so Chromium
-   * cannot allocate/import native GpuMemoryBuffers. Keep GPU compositing through ANGLE/OpenGL,
-   * but force compositor/raster resources through ordinary shared-memory uploads instead of
-   * zero-copy/OOP-raster SharedImages.
+   * Eleven Chromium switches plus NULL. Xwayland in the Android guest has no DRI3, so Chromium
+   * cannot allocate/import native GpuMemoryBuffers. Keep the final compositor on ANGLE/OpenGL,
+   * but raster page/canvas content in-process/CPU and upload ordinary textures. Steam's CEF build
+   * keeps CanvasOopRasterization enabled even with --disable-oop-rasterization, so disable the
+   * feature explicitly too.
    */
-  char **argv = calloc(argc + 9, sizeof(*argv));
+  char **argv = calloc(argc + 12, sizeof(*argv));
   if (!argv) { free(cmd); return; }
 
   size_t ai = 0;
@@ -126,13 +127,16 @@ static void reexec_with_wayland_llvmpipe(void) {
   argv[ai++] = "--disable-zero-copy";
   argv[ai++] = "--disable-oop-rasterization";
   argv[ai++] = "--disable-accelerated-video-decode";
+  argv[ai++] = "--disable-gpu-rasterization";
+  argv[ai++] = "--disable-features=CanvasOopRasterization,CanvasOopWithoutGpuTileRaster";
+  argv[ai++] = "--disable-partial-raster";
   argv[ai] = NULL;
 
   isolate_webhelper_graphics();
   setenv("BL_STEAMWEBHELPER_GRAPHICS_READY", "1", 1);
 
   static const char msg[] =
-      "DroidDeck: re-exec steamwebhelper on X11 + ANGLE/GL + llvmpipe; GMB/zero-copy/OOP-raster disabled\n";
+      "DroidDeck: re-exec steamwebhelper on X11 + ANGLE/GL + llvmpipe; CPU raster + GMB/zero-copy disabled\n";
   (void)write(STDERR_FILENO, msg, sizeof(msg) - 1);
 
   /* /proc/self/exe preserves Steam's exact webhelper binary even after client updates. */
