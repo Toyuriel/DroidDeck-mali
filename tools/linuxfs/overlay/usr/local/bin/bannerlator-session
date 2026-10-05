@@ -900,17 +900,17 @@ BUSCONF
         # Chromium/CEF has a native Ozone Wayland backend. Use that directly against gamescope and
         # keep ANGLE on PanVK, avoiding Xwayland and GLX entirely.
         export BL_STEAM_CEF_WAYLAND=1
-        export OZONE_PLATFORM_HINT=wayland
+        # Steam does not forward its backend-selection -cef-* switches into steamwebhelper's
+        # Chromium argv. libblsession re-execs the actual helper with --ozone-platform=wayland
+        # and ANGLE/GL on llvmpipe before CEF starts. Keep only the Steam-level switches that
+        # enable the GPU compositor and avoid visibility throttling.
         _bl_cef+=(
           -cef-force-gpu
-          -cef-ozone-platform=wayland
-          -cef-use-gl=angle
-          -cef-use-angle=vulkan
           -cef-disable-occlusion
           -cef-no-restart-on-ui-mode-change
           -cef-force-opaque-backgrounds
         )
-        echo "== steam: Mali CEF mode = native Wayland + ANGLE/Vulkan on PanVK (no Xwayland/GLX)"
+        echo "== steam: Mali CEF mode = forced Wayland + llvmpipe GPU compositor (PanVK reserved for games)"
       else
         unset BL_STEAM_CEF_WAYLAND
         _bl_cef+=(-cef-force-gpu -cef-ozone-platform=x11 -cef-use-gl=angle -cef-use-angle=vulkan)
