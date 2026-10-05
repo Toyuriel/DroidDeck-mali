@@ -894,22 +894,25 @@ BUSCONF
       step "starting the Steam client${BL_STEAM_UI:+ ($BL_STEAM_UI UI)}"
       _bl_cef=(-no-cef-sandbox)
       if [ "${BL_MALI_ANDROID_VULKAN:-0}" = 1 ]; then
-        # Steam's ARM64 CEF still creates a GLX browser-compositor surface under Xwayland even
-        # when ANGLE/Vulkan is requested. On Mali/PanVK that hybrid path repeatedly fails
-        # AcquirePixmap (BadDrawable/GLXBadPixmap) and the visible Gamepad UI flashes as the GPU
-        # process is recreated. libblsession's steamwebhelper_gl preload already isolates only
-        # steamwebhelper onto llvmpipe, so let CEF use its native X11/GL path here instead of
-        # overriding it back to ANGLE/Vulkan. Gamescope, Steam games and Proton keep PanVK.
+        # The X11/GLX path is unstable on Mali inside nested gamescope: accelerated CEF produced
+        # BadDrawable/GLXBadPixmap and the software fallback then became extremely slow and
+        # repeatedly hid 0x0 browser windows while opening the Steam/Quick Access menus.
+        # Chromium/CEF has a native Ozone Wayland backend. Use that directly against gamescope and
+        # keep ANGLE on PanVK, avoiding Xwayland and GLX entirely.
+        export BL_STEAM_CEF_WAYLAND=1
+        export OZONE_PLATFORM_HINT=wayland
         _bl_cef+=(
-          -cef-ozone-platform=x11
-          -cef-disable-gpu
-          -cef-disable-gpu-compositing
+          -cef-force-gpu
+          -cef-ozone-platform=wayland
+          -cef-use-gl=angle
+          -cef-use-angle=vulkan
           -cef-disable-occlusion
           -cef-no-restart-on-ui-mode-change
           -cef-force-opaque-backgrounds
         )
-        echo "== steam: Mali CEF mode = pure software UI (CEF GPU disabled; games remain on PanVK)"
+        echo "== steam: Mali CEF mode = native Wayland + ANGLE/Vulkan on PanVK (no Xwayland/GLX)"
       else
+        unset BL_STEAM_CEF_WAYLAND
         _bl_cef+=(-cef-force-gpu -cef-ozone-platform=x11 -cef-use-gl=angle -cef-use-angle=vulkan)
       fi
       "$steam_root/steamrtarm64/steam" "${_bl_ui[@]}" -clientbeta "$steam_channel" \
