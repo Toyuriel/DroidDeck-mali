@@ -24,7 +24,10 @@ permissions:
 concurrency:
   # Replace older builds only for the same PR. Each push/dispatch gets its own group so one main
   # build cannot cancel another before it signs and publishes.
-  group: build-${{ github.event.pull_request.number || github.run_id }}
+  # Keep the normal "new commit replaces the older PR build" behavior, but isolate manual
+  # re-runs from a stale/cancelled attempt. GitHub can otherwise re-enter the same build-PR group
+  # before the old attempt has fully released it and cancel the retry before its first step.
+  group: build-${{ github.event.pull_request.number || github.run_id }}-attempt-${{ github.run_attempt }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
