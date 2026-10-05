@@ -134,7 +134,7 @@ static void droiddeck_steamwebhelper_graphics(void) {
 
   isolate_webhelper_graphics();
 
-  const char *enabled = getenv("BL_STEAM_CEF_WAYLAND");
+  const char *enabled = getenv("BL_STEAM_CEF_ISOLATED");
   if (enabled != NULL && strcmp(enabled, "1") == 0) {
     if (!getenv("BL_STEAMWEBHELPER_GRAPHICS_READY")) {
       reexec_with_wayland_llvmpipe();
