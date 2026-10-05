@@ -30,6 +30,10 @@ sudo apt-get install -y -qq \
   pkg-config bison flex libdrm-dev libelf-dev libwayland-dev wayland-protocols \
   llvm-20-dev libclang-20-dev libclc-20-dev libllvmspirvlib-20-dev spirv-tools \
   libdrm-dev:arm64 libelf-dev:arm64 libwayland-dev:arm64 \
+  libx11-dev:arm64 libx11-xcb-dev:arm64 libxext-dev:arm64 libxfixes-dev:arm64 \
+  libxrandr-dev:arm64 libxshmfence-dev:arm64 \
+  libxcb1-dev:arm64 libxcb-dri3-dev:arm64 libxcb-present-dev:arm64 \
+  libxcb-randr0-dev:arm64 libxcb-sync-dev:arm64 libxcb-xfixes0-dev:arm64 \
   libexpat1-dev:arm64 zlib1g-dev:arm64 >/dev/null
 python3 -m pip install --user -q --upgrade meson ninja mako PyYAML packaging
 
@@ -282,7 +286,7 @@ EOF
 
 meson setup "$BUILD" "$SRC" --cross-file "$ROOT/aarch64-linux.txt" \
   -Dbuildtype=release \
-  -Dplatforms=wayland \
+  -Dplatforms=x11,wayland \
   -Dgallium-drivers=[] \
   -Dvulkan-drivers=panfrost \
   -Dpanfrost-kmds=kbase \
@@ -314,11 +318,15 @@ cat > "$DEST/SOURCE.txt" <<EOF
 PanVK G720 source $PANVK_REPO
 technical source authority $PANVK_SHA
 target glibc aarch64
-platform wayland
+platforms x11,wayland
 panfrost-kmds kbase
 DroidDeck patch kbase-fd-broker-v1
 EOF
 
 file "$DEST/libvulkan_panfrost.so"
 aarch64-linux-gnu-readelf -d "$DEST/libvulkan_panfrost.so" | grep NEEDED || true
+strings "$DEST/libvulkan_panfrost.so" | grep -q 'VK_KHR_wayland_surface'
+strings "$DEST/libvulkan_panfrost.so" | grep -q 'VK_KHR_xlib_surface'
+strings "$DEST/libvulkan_panfrost.so" | grep -q 'VK_KHR_xcb_surface'
+echo "PanVK WSI check: Wayland + Xlib + XCB present"
 sha256sum "$DEST/libvulkan_panfrost.so"
