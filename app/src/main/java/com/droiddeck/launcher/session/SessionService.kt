@@ -2,6 +2,7 @@ package com.droiddeck.launcher.session
 
 import com.droiddeck.launcher.gpu.GpuInfo
 import com.droiddeck.launcher.gpu.MaliSupportPackage
+import com.droiddeck.launcher.gpu.MaliKbaseFdBroker
 import com.droiddeck.launcher.gpu.LinuxVulkanDriver
 import com.droiddeck.launcher.gpu.LinuxVulkanDriverManager
 
@@ -21,7 +22,6 @@ import android.os.Environment
 import android.os.IBinder
 import android.os.Handler
 import android.os.Looper
-import android.os.ParcelFileDescriptor
 import android.os.PowerManager
 import android.util.Log
 import com.droiddeck.launcher.R
@@ -69,8 +69,6 @@ class SessionService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
     private var sessionPid = -1
-    /** Android-owned Kbase fd kept open while a Mali Steam session runs. */
-    private var maliKbaseHandle: ParcelFileDescriptor? = null
     /** Auxiliary PTY-backed proot shells launched from a secondary-display terminal. */
     private val auxiliaryProcesses = HashMap<Int, Long>()
     private val auxiliaryProcessesLock = Any()
@@ -345,25 +343,15 @@ class SessionService : Service() {
         val size = SessionState.outputSize
         val guest = ArrayList<String>()
 
-        // PRoot can stall when /dev/mali0 is mounted as a character-device bind. Keep Kbase open
-        // in the Android service instead and let PanVK reopen the same file description through
-        // procfs. /proc is already shared with the guest and this never exposes the fd outside
-        // DroidDeck's own process.
         if (GpuInfo.detect().family == GpuInfo.Family.MALI && SessionState.mode != MODE_DESKTOP) {
-            runCatching {
-                maliKbaseHandle?.close()
-                val pfd = ParcelFileDescriptor.open(File("/dev/mali0"), ParcelFileDescriptor.MODE_READ_WRITE)
-                maliKbaseHandle = pfd
-                val procPath = "/proc/" + android.os.Process.myPid() + "/fd/" + pfd.fd
-                guest.add("DROIDDECK_KBASE_DEVICE=" + procPath)
-                guest.add("BL_MALI_PANVK=1")
-                SessionEvents.record("mali.kbase_fd.ready", mapOf("path" to procPath))
-                Log.i(TAG, "Mali Kbase fd broker ready at $procPath")
-            }.onFailure {
-                maliKbaseHandle = null
-                SessionEvents.record("mali.kbase_fd.failed", mapOf("error" to (it.message ?: it.javaClass.simpleName)))
-                Log.w(TAG, "Could not keep /dev/mali0 open for PanVK; bridge fallback remains available", it)
-            }
+            val socketName = "droiddeck-kbase-" + android.os.Process.myPid() + "-" + gen
+            val broker = MaliKbaseFdBroker(socketName)
+            broker.attach(this)
+            components.add(broker)
+            guest.add("PANVK_KBASE_FD_SOCKET=" + socketName)
+            guest.add("BL_MALI_PANVK=1")
+            SessionEvents.record("mali.kbase_broker.configured", mapOf("socket" to socketName))
+            Log.i(TAG, "Mali PanVK Kbase broker configured: $socketName")
         }
         // The desktop's Steam launchers start the client there (bannerlator-steam-launch), through the
         // same set-up as a Steam session: it gets what the client and its games are started with.
@@ -1313,8 +1301,6 @@ class SessionService : Service() {
         SessionState.stopRequested = false
         SessionEvents.record("guest.exited", mapOf("status" to status))
         GpuClockPin.stop(this)
-        runCatching { maliKbaseHandle?.close() }
-        maliKbaseHandle = null
         SessionEvents.transition(SessionPhase.STOPPING, "session.stopping", mapOf("status" to status))
         suspendOperationPending = false
         launchWatcher?.stopWatching()
