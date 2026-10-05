@@ -900,8 +900,8 @@ BUSCONF
         # process is recreated. libblsession's steamwebhelper_gl preload already isolates only
         # steamwebhelper onto llvmpipe, so let CEF use its native X11/GL path here instead of
         # overriding it back to ANGLE/Vulkan. Gamescope, Steam games and Proton keep PanVK.
-        _bl_cef+=(-cef-ozone-platform=x11 -cef-use-gl=desktop)
-        echo "== steam: Mali CEF mode = isolated llvmpipe GLX (games remain on PanVK)"
+        _bl_cef+=(-cef-ozone-platform=x11 -cef-use-gl=desktop -cef-disable-gpu-compositing)
+        echo "== steam: Mali CEF mode = llvmpipe GLX + software compositing (Gamescope WSI disabled in webhelper)"
       else
         _bl_cef+=(-cef-force-gpu -cef-ozone-platform=x11 -cef-use-gl=angle -cef-use-angle=vulkan)
       fi
