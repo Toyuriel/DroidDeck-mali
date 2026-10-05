@@ -378,8 +378,22 @@ case $mode in
     cores=$(program_cores)
     if [ -n "$cores" ]; then
       echo "== program cores: $cores"
-      taskset -cp "$cores" $$ >/dev/null 2>&1 || true
+      taskset -cp "$cores" $ >/dev/null 2>&1 || true
     fi
+    # Steam needs the global GL->Zink route for CEF, but native Vulkan emulators do not. PPSSPP
+    # defaults to OpenGL on Linux even when Vulkan works, which turns its renderer into
+    # OpenGL -> Zink -> PanVK. On Mali force PPSSPP's own Vulkan backend and remove only the GL
+    # overrides from the emulator process; gamescope was already started with PanVK above.
+    case "$(basename "$target")" in
+      PPSSPPSDL)
+        if [ "${BL_MALI_ANDROID_VULKAN:-0}" = 1 ]; then
+          unset MESA_LOADER_DRIVER_OVERRIDE GALLIUM_DRIVER LIBGL_KOPPER_DRI2
+          unset ZINK_DESCRIPTORS ZINK_DEBUG mesa_glthread
+          set -- --graphics=vulkan "$@"
+          echo "== PPSSPP: forcing native Vulkan on PanVK (no OpenGL/Zink translation)"
+        fi
+        ;;
+    esac
     # Player 1 on the controller in an emulator that has no profile of its own yet.
     python3 /usr/local/bin/bannerlator-pad-defaults 2>&1 || true
     case ${target,,} in
