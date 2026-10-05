@@ -34,6 +34,7 @@ sudo apt-get install -y -qq \
   libxrandr-dev:arm64 libxshmfence-dev:arm64 \
   libxcb1-dev:arm64 libxcb-dri3-dev:arm64 libxcb-present-dev:arm64 \
   libxcb-randr0-dev:arm64 libxcb-sync-dev:arm64 libxcb-xfixes0-dev:arm64 \
+  libxcb-shm0-dev:arm64 libxcb-keysyms1-dev:arm64 \
   libexpat1-dev:arm64 zlib1g-dev:arm64 >/dev/null
 python3 -m pip install --user -q --upgrade meson ninja mako PyYAML packaging
 
