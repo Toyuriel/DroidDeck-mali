@@ -750,11 +750,11 @@ static void take_shm(struct surface *s, struct wl_shm_buffer *shm, struct wl_res
 static struct surface *g_hud_surface;
 
 /*
- * Gamescope occasionally commits a 1x1 dmabuf or temporarily attaches NULL while its Xwayland
- * window is being rebuilt between Steam UI views. On Android that outer Wayland surface is the
- * whole visible session, so accepting those transient commits turns a harmless internal rebuild
- * into a black flash/full scene resize. Keep the last full-size frame until a real replacement
- * arrives; resource destruction still tears it down normally when gamescope actually exits.
+ * Gamescope occasionally commits a 1x1 dmabuf while its Xwayland window is being rebuilt between
+ * Steam UI views. On Android that outer Wayland surface is the whole visible session, so accepting
+ * that tiny buffer turns an internal rebuild into a full-scene flash. Ignore only those tiny
+ * replacement buffers. A NULL attach must be honored immediately: holding the previous dmabuf can
+ * keep a stale/dark frame latched and can delay buffer release while Gamescope is trying to recover.
  */
 static int is_gamescope_surface(const struct surface *s) {
     struct client_info *ci = client_info_of(wl_resource_get_client(s->resource));
@@ -1142,13 +1142,12 @@ static void surface_commit(struct wl_client *c, struct wl_resource *r) {
             if (!buffer && has_fullsize_gamescope_frame(s)) {
                 char name[160];
                 describe(s, name, sizeof(name));
-                banner_log("vulkan", "%s transient NULL attach ignored; keeping last %dx%d frame",
+                banner_log("vulkan", "%s NULL attach releases previous %dx%d frame",
                            name, s->buf_w, s->buf_h);
-            } else {
-                drop_dmabuf(s, 1);
-                s->has_content = 0;
-                if (buffer) wl_buffer_send_release(buffer);
             }
+            drop_dmabuf(s, 1);
+            s->has_content = 0;
+            if (buffer) wl_buffer_send_release(buffer);
         }
     }
 
