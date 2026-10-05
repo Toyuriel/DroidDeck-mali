@@ -1,5 +1,4 @@
 diff --git a/src/rendervulkan.cpp b/src/rendervulkan.cpp
-index 0000000..1111111 100644
 --- a/src/rendervulkan.cpp
 +++ b/src/rendervulkan.cpp
 @@ -463,11 +463,15 @@ bool CVulkanDevice::createDevice()
