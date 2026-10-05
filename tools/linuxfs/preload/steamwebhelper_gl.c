@@ -40,6 +40,14 @@ static void isolate_webhelper_graphics(void) {
   setenv("GALLIUM_DRIVER", "llvmpipe", 1);
   setenv("LIBGL_KOPPER_DISABLE", "true", 1);
   setenv("MESA_NO_ERROR", "1", 0);
+
+  /*
+   * The global Steam tuning may enable Mesa's GL command marshalling. llvmpipe is already
+   * internally threaded, and Chromium/ANGLE destroys shared-image resources aggressively.
+   * Deferred GL commands here make those lifetimes even less deterministic, so keep glthread
+   * off only in the webhelper process tree.
+   */
+  setenv("mesa_glthread", "false", 1);
 }
 
 /* Read the argv Linux gave this process. Constructors do not receive argc/argv. */
@@ -94,8 +102,13 @@ static void reexec_with_wayland_llvmpipe(void) {
     off += n + 1;
   }
 
-  /* Three Chromium switches plus NULL. Existing args stay byte-for-byte identical. */
-  char **argv = calloc(argc + 4, sizeof(*argv));
+  /*
+   * Eight Chromium switches plus NULL. Xwayland in the Android guest has no DRI3, so Chromium
+   * cannot allocate/import native GpuMemoryBuffers. Keep GPU compositing through ANGLE/OpenGL,
+   * but force compositor/raster resources through ordinary shared-memory uploads instead of
+   * zero-copy/OOP-raster SharedImages.
+   */
+  char **argv = calloc(argc + 9, sizeof(*argv));
   if (!argv) { free(cmd); return; }
 
   size_t ai = 0;
@@ -108,13 +121,18 @@ static void reexec_with_wayland_llvmpipe(void) {
   argv[ai++] = "--ozone-platform=x11";
   argv[ai++] = "--use-gl=angle";
   argv[ai++] = "--use-angle=gl";
+  argv[ai++] = "--disable-gpu-memory-buffer-compositor-resources";
+  argv[ai++] = "--disable-gpu-memory-buffer-video-frames";
+  argv[ai++] = "--disable-zero-copy";
+  argv[ai++] = "--disable-oop-rasterization";
+  argv[ai++] = "--disable-accelerated-video-decode";
   argv[ai] = NULL;
 
   isolate_webhelper_graphics();
   setenv("BL_STEAMWEBHELPER_GRAPHICS_READY", "1", 1);
 
   static const char msg[] =
-      "DroidDeck: re-exec steamwebhelper on X11 + ANGLE/GL + llvmpipe; PanVK isolated\n";
+      "DroidDeck: re-exec steamwebhelper on X11 + ANGLE/GL + llvmpipe; GMB/zero-copy/OOP-raster disabled\n";
   (void)write(STDERR_FILENO, msg, sizeof(msg) - 1);
 
   /* /proc/self/exe preserves Steam's exact webhelper binary even after client updates. */
