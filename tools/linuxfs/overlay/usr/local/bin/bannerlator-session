@@ -907,10 +907,8 @@ BUSCONF
           -cef-disable-occlusion
           -cef-no-restart-on-ui-mode-change
           -cef-force-opaque-backgrounds
-          -system-composer
-          -nofasthtml
         )
-        echo "== steam: Mali CEF mode = pure software + system composer (CEF GPU disabled; games remain on PanVK)"
+        echo "== steam: Mali CEF mode = pure software UI (CEF GPU disabled; games remain on PanVK)"
       else
         _bl_cef+=(-cef-force-gpu -cef-ozone-platform=x11 -cef-use-gl=angle -cef-use-angle=vulkan)
       fi
