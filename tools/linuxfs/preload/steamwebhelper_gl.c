@@ -105,7 +105,7 @@ static void reexec_with_wayland_llvmpipe(void) {
     argv[ai++] = cmd + off;
     off += n + 1;
   }
-  argv[ai++] = "--ozone-platform=wayland";
+  argv[ai++] = "--ozone-platform=x11";
   argv[ai++] = "--use-gl=angle";
   argv[ai++] = "--use-angle=gl";
   argv[ai] = NULL;
@@ -114,7 +114,7 @@ static void reexec_with_wayland_llvmpipe(void) {
   setenv("BL_STEAMWEBHELPER_GRAPHICS_READY", "1", 1);
 
   static const char msg[] =
-      "DroidDeck: re-exec steamwebhelper on Wayland + ANGLE/GL + llvmpipe; PanVK isolated\n";
+      "DroidDeck: re-exec steamwebhelper on X11 + ANGLE/GL + llvmpipe; PanVK isolated\n";
   (void)write(STDERR_FILENO, msg, sizeof(msg) - 1);
 
   /* /proc/self/exe preserves Steam's exact webhelper binary even after client updates. */
@@ -122,7 +122,7 @@ static void reexec_with_wayland_llvmpipe(void) {
 
   /* If re-exec fails, continue with isolated llvmpipe rather than falling into PanVK. */
   static const char fail[] =
-      "DroidDeck: steamwebhelper Wayland re-exec failed; continuing with llvmpipe isolation\n";
+      "DroidDeck: steamwebhelper X11 re-exec failed; continuing with llvmpipe isolation\n";
   (void)write(STDERR_FILENO, fail, sizeof(fail) - 1);
   free(argv);
   free(cmd);
@@ -141,7 +141,7 @@ static void droiddeck_steamwebhelper_graphics(void) {
       return;
     }
     static const char msg[] =
-        "DroidDeck: steamwebhelper Wayland llvmpipe GPU compositor active; games remain on PanVK\n";
+        "DroidDeck: steamwebhelper X11 llvmpipe GPU compositor active; games remain on PanVK\n";
     (void)write(STDERR_FILENO, msg, sizeof(msg) - 1);
     return;
   }
