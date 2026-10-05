@@ -512,6 +512,10 @@ class SessionService : Service() {
         // by the teardown a second after the new one has started, and its exit used to arrive
         // here as "session ended: 137" and end the NEW session. An exit belongs to the session
         // that started it.
+        val prootLog = File(sessionDir, "proot.log")
+        runCatching {
+            prootLog.writeText("DroidDeck host/PRoot startup log\nmode=" + SessionState.mode + "\n\n")
+        }
         SessionEvents.record("guest.launch.begin", mapOf("mode" to SessionState.mode))
         val pid = HostProcess.start(line, hostEnv.asArray(), root, { status ->
             if (gen != sessionGen) {
@@ -519,9 +523,13 @@ class SessionService : Service() {
                 return@start
             }
             SessionEvents.record("guest.process_exit", mapOf("status" to status))
+            runCatching { prootLog.appendText("== PRoot exited status=" + status + "\n") }
             Log.i(TAG, "session ended: $status")
             stopSession(status ?: -1)
-        }, null)
+        }, { output ->
+            runCatching { prootLog.appendText(output + "\n") }
+            Log.i(TAG, "proot: $output")
+        })
         SessionEvents.record("guest.launch.result", mapOf("pid" to pid))
         Log.i(TAG, "session pid $pid, log ${sessionLog.path}")
         if (gen != sessionGen || !SessionState.running) {
