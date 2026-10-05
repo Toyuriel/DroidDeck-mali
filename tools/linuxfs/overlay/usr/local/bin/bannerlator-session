@@ -894,25 +894,23 @@ BUSCONF
       step "starting the Steam client${BL_STEAM_UI:+ ($BL_STEAM_UI UI)}"
       _bl_cef=(-no-cef-sandbox)
       if [ "${BL_MALI_ANDROID_VULKAN:-0}" = 1 ]; then
-        # The X11/GLX path is unstable on Mali inside nested gamescope: accelerated CEF produced
-        # BadDrawable/GLXBadPixmap and the software fallback then became extremely slow and
-        # repeatedly hid 0x0 browser windows while opening the Steam/Quick Access menus.
-        # Chromium/CEF has a native Ozone Wayland backend. Use that directly against gamescope and
-        # keep ANGLE on PanVK, avoiding Xwayland and GLX entirely.
-        export BL_STEAM_CEF_WAYLAND=1
-        # Steam does not forward its backend-selection -cef-* switches into steamwebhelper's
-        # Chromium argv. libblsession re-execs the actual helper with --ozone-platform=wayland
-        # and ANGLE/GL on llvmpipe before CEF starts. Keep only the Steam-level switches that
-        # enable the GPU compositor and avoid visibility throttling.
+        # Keep Chromium's GPU compositor active, but isolate only steamwebhelper from PanVK.
+        # The Wayland+llvmpipe experiment reached Ozone/Wayland correctly but Chromium could not
+        # create its Wayland GPU buffers without a DRM render node, leaving the whole UI black.
+        # libblsession therefore re-execs steamwebhelper itself with Chromium's real X11 +
+        # ANGLE/OpenGL switches and llvmpipe before CEF initializes. Xwayland handles presentation;
+        # gamescope and games continue to use PanVK.
+        export BL_STEAM_CEF_ISOLATED=1
+        unset BL_STEAM_CEF_WAYLAND
         _bl_cef+=(
           -cef-force-gpu
           -cef-disable-occlusion
           -cef-no-restart-on-ui-mode-change
           -cef-force-opaque-backgrounds
         )
-        echo "== steam: Mali CEF mode = forced Wayland + llvmpipe GPU compositor (PanVK reserved for games)"
+        echo "== steam: Mali CEF mode = X11 + ANGLE/GL on isolated llvmpipe (PanVK reserved for games)"
       else
-        unset BL_STEAM_CEF_WAYLAND
+        unset BL_STEAM_CEF_ISOLATED BL_STEAM_CEF_WAYLAND
         _bl_cef+=(-cef-force-gpu -cef-ozone-platform=x11 -cef-use-gl=angle -cef-use-angle=vulkan)
       fi
       "$steam_root/steamrtarm64/steam" "${_bl_ui[@]}" -clientbeta "$steam_channel" \
