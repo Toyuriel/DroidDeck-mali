@@ -748,6 +748,23 @@ static void take_shm(struct surface *s, struct wl_shm_buffer *shm, struct wl_res
 /* The window the app's performance HUD follows: the latest one at least as big as the last to
  * start presenting GPU frames (take_dmabuf) (X11 binds the HUD to the _MESA_DRV window and counts X presents instead). JNI upcalls. */
 static struct surface *g_hud_surface;
+
+/*
+ * Gamescope occasionally commits a 1x1 dmabuf or temporarily attaches NULL while its Xwayland
+ * window is being rebuilt between Steam UI views. On Android that outer Wayland surface is the
+ * whole visible session, so accepting those transient commits turns a harmless internal rebuild
+ * into a black flash/full scene resize. Keep the last full-size frame until a real replacement
+ * arrives; resource destruction still tears it down normally when gamescope actually exits.
+ */
+static int is_gamescope_surface(const struct surface *s) {
+    struct client_info *ci = client_info_of(wl_resource_get_client(s->resource));
+    return ci && !strcmp(ci->name, "gamescope");
+}
+
+static int has_fullsize_gamescope_frame(const struct surface *s) {
+    return is_gamescope_surface(s) && s->has_content && s->buf_w >= 640 && s->buf_h >= 360;
+}
+
 /* When the HUD's window last presented a frame (now_ns), to let a replacement take over. */
 static int64_t g_hud_last_ns;
 /* That window committed a frame the screen has not drawn yet. */
@@ -759,6 +776,14 @@ extern void banner_on_game_frame(void);
 extern void banner_on_game_program(int pid, const char *program);
 
 static void take_dmabuf(struct surface *s, struct dmabuf_buffer *b, struct wl_resource *buffer) {
+    if (has_fullsize_gamescope_frame(s) && b->width <= 4 && b->height <= 4) {
+        char name[160];
+        describe(s, name, sizeof(name));
+        banner_log("vulkan", "%s transient %dx%d frame ignored; keeping %dx%d",
+                   name, b->width, b->height, s->buf_w, s->buf_h);
+        wl_buffer_send_release(buffer);
+        return;
+    }
     if (s->dmabuf != buffer || s->dmabuf_buf != b) {
         drop_dmabuf(s, 1);
         s->dmabuf = buffer;
@@ -1114,9 +1139,16 @@ static void surface_commit(struct wl_client *c, struct wl_resource *r) {
             drop_dmabuf(s, 1);
             take_shm(s, shm, buffer);
         } else {
-            drop_dmabuf(s, 1);
-            s->has_content = 0;
-            if (buffer) wl_buffer_send_release(buffer);
+            if (!buffer && has_fullsize_gamescope_frame(s)) {
+                char name[160];
+                describe(s, name, sizeof(name));
+                banner_log("vulkan", "%s transient NULL attach ignored; keeping last %dx%d frame",
+                           name, s->buf_w, s->buf_h);
+            } else {
+                drop_dmabuf(s, 1);
+                s->has_content = 0;
+                if (buffer) wl_buffer_send_release(buffer);
+            }
         }
     }
 
