@@ -1,9 +1,9 @@
-name: CloversNX Eden Mali v0.4
+name: CloversNX Eden Mali v0.4.1 ES Privacy
 
 on:
   push:
     branches:
-      - cloversnx-eden-mali-v0.4
+      - cloversnx-eden-mali-v0.4.1-es-privacy
   pull_request:
     branches:
       - main
@@ -101,32 +101,59 @@ jobs:
         run: |
           bash symbiosis/tools/apply_patch.sh             --patch "$GITHUB_WORKSPACE/symbiosis/patch"             --eden "$GITHUB_WORKSPACE/eden"
 
-      - name: Brand isolated CloversNX package
+      - name: Privacy harden and brand CloversNX
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          p = Path("eden/src/android/app/build.gradle.kts")
-          s = p.read_text(encoding="utf-8")
+
+          gradle = Path("eden/src/android/app/build.gradle.kts")
+          s = gradle.read_text(encoding="utf-8")
           old = 'applicationId = "dev.eden.eden_emulator"'
           if old not in s:
               raise SystemExit("Eden applicationId changed")
           s = s.replace(old, 'applicationId = "com.cloversgamers.cloversnx.edenmali"', 1)
           s = s.replace(
               'resValue("string", "app_name_suffixed", "Eden")',
-              'resValue("string", "app_name_suffixed", "CloversNX Eden Mali")',
+              'resValue("string", "app_name_suffixed", "CloversNX Eden Mali ES")',
               1,
           )
           s = s.replace(
               'variant.resValue("string", "app_name_suffixed", "Eden Debug")',
-              'variant.resValue("string", "app_name_suffixed", "CloversNX Eden Mali")',
+              'variant.resValue("string", "app_name_suffixed", "CloversNX Eden Mali ES")',
               1,
           )
-          p.write_text(s, encoding="utf-8")
-          print("isolated app id and label applied")
+
+          # Compile Eden without its web-service/telemetry module.
+          if '"-DENABLE_WEB_SERVICE=1"' not in s:
+              raise SystemExit("ENABLE_WEB_SERVICE build flag changed")
+          s = s.replace('"-DENABLE_WEB_SERVICE=1"', '"-DENABLE_WEB_SERVICE=0"', 1)
+          gradle.write_text(s, encoding="utf-8")
+
+          manifest = Path("eden/src/android/app/src/main/AndroidManifest.xml")
+          m = manifest.read_text(encoding="utf-8")
+          for perm in (
+              '    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />\n',
+              '    <uses-permission android:name="android.permission.INTERNET" />\n',
+              '    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />\n',
+              '    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />\n',
+          ):
+              m = m.replace(perm, "")
+          m = m.replace('android:allowBackup="true"', 'android:allowBackup="false"', 1)
+          manifest.write_text(m, encoding="utf-8")
+
+          print("privacy profile: web services OFF, INTERNET permission removed, backup disabled")
           PY
+
           grep -n 'com.cloversgamers.cloversnx.edenmali' eden/src/android/app/build.gradle.kts
+          grep -n 'ENABLE_WEB_SERVICE=0' eden/src/android/app/build.gradle.kts
+          if grep -q 'android.permission.INTERNET' eden/src/android/app/src/main/AndroidManifest.xml; then
+            echo "::error::INTERNET permission still present"
+            exit 1
+          fi
+          grep -n 'android:allowBackup="false"' eden/src/android/app/src/main/AndroidManifest.xml
           grep -n 'linkage, 3, 0, 7, "symbiosis_auto_mode"' eden/src/common/settings.h
           grep -n 'CloversNX G720 safe profile' eden/src/common/symbiosis/mali_tuning.cpp
+          grep -n '<string name="mode_stability">Estabilidad</string>' eden/src/android/app/src/main/res/values-es/strings.xml
 
       - name: Build mainline debug APK
         working-directory: eden/src/android
@@ -149,16 +176,16 @@ jobs:
             APK="$(find eden/src/android/app/build/outputs/apk -type f -name '*.apk' | head -1)"
           fi
           test -n "$APK"
-          cp "$APK" out/CloversNX-Eden-Mali-v0.4-G720.apk
-          sha256sum out/CloversNX-Eden-Mali-v0.4-G720.apk | tee out/CloversNX-Eden-Mali-v0.4-G720.apk.sha256
-          unzip -l out/CloversNX-Eden-Mali-v0.4-G720.apk | grep 'lib/arm64-v8a/libyuzu-android.so'
-          ls -lh out/CloversNX-Eden-Mali-v0.4-G720.apk
+          cp "$APK" out/CloversNX-Eden-Mali-v0.4.1-ES-Privacy-G720.apk
+          sha256sum out/CloversNX-Eden-Mali-v0.4.1-ES-Privacy-G720.apk | tee out/CloversNX-Eden-Mali-v0.4.1-ES-Privacy-G720.apk.sha256
+          unzip -l out/CloversNX-Eden-Mali-v0.4.1-ES-Privacy-G720.apk | grep 'lib/arm64-v8a/libyuzu-android.so'
+          ls -lh out/CloversNX-Eden-Mali-v0.4.1-ES-Privacy-G720.apk
           ccache --show-stats | head -20 || true
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: CloversNX-Eden-Mali-v0.4-G720
+          name: CloversNX-Eden-Mali-v0.4.1-ES-Privacy-G720
           path: out/
           retention-days: 14
           if-no-files-found: error
