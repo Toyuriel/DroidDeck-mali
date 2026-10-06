@@ -143,6 +143,22 @@ replace(
     'var executorFlushThreshold by sharedPreferences(context, 96, prefName = prefName)'
 )
 
+# Enforce the Mali-safe native values even when older SharedPreferences exist.
+# Defaults alone do not affect users who already changed these settings in v0.1/v0.2.
+replace(
+    "app/src/main/java/org/stratoemu/strato/settings/NativeSettings.kt",
+    '''        pref.forceTripleBuffering,
+        pref.disableFrameThrottling,
+        pref.executorSlotCountScale,
+        pref.executorFlushThreshold,
+        pref.useDirectMemoryImport,''',
+    '''        false, // CloversNX Mali: avoid extra swapchain pressure
+        pref.disableFrameThrottling,
+        minOf(pref.executorSlotCountScale, 4),
+        minOf(pref.executorFlushThreshold, 96),
+        false, // Direct memory import is not used on this Mali profile'''
+)
+
 # Android 16 stability: build cubeb with AAudio in addition to OpenSL ES.
 # The test log ends immediately after OpenSL enters cubeb_stream_init.
 replace(
