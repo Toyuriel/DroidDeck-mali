@@ -101,6 +101,11 @@ jobs:
         run: |
           bash symbiosis/tools/apply_patch.sh             --patch "$GITHUB_WORKSPACE/symbiosis/patch"             --eden "$GITHUB_WORKSPACE/eden"
 
+          python3 symbiosis/tools/merge_strings.py \
+            eden/src/android/app/src/main/res/values/strings.xml \
+            symbiosis/patch/android/values/strings-es.xml \
+            eden/src/android/app/src/main/res/values/strings.xml
+
       - name: Privacy harden and brand CloversNX
         run: |
           python3 - <<'PY'
