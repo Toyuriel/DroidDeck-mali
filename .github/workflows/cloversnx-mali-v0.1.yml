@@ -1,9 +1,9 @@
-name: CloversNX Mali v0.2 Safe
+name: CloversNX Mali v0.3 AAudio
 
 on:
   push:
     branches:
-      - cloversnx-mali-v0.2
+      - cloversnx-mali-v0.3
   pull_request:
     branches:
       - main
@@ -31,7 +31,7 @@ jobs:
       - name: Apply Mali-G720 profile
         run: |
           python3 switch-fork/apply_mali_profile.py strato-src
-          grep -R "CloversNX Mali-G720 v0.2 safe profile" -n strato-src/app/src/main/cpp/skyline/gpu/trait_manager.cpp
+          grep -R "CloversNX Mali-G720 v0.3 stability profile" -n strato-src/app/src/main/cpp/skyline/gpu/trait_manager.cpp
           grep -R 'applicationId "com.cloversgamers.cloversnx.mali"' -n strato-src/app/build.gradle
 
       - name: Install Java 17
@@ -58,13 +58,13 @@ jobs:
       - name: Package APK
         run: |
           mkdir -p out
-          cp strato-src/app/build/outputs/apk/mainline/release/app-mainline-release.apk out/CloversNX-Mali-v0.2-G720-Safe.apk
-          sha256sum out/CloversNX-Mali-v0.2-G720-Safe.apk | tee out/CloversNX-Mali-v0.2-G720-Safe.apk.sha256
+          cp strato-src/app/build/outputs/apk/mainline/release/app-mainline-release.apk out/CloversNX-Mali-v0.3-G720-AAudio.apk
+          sha256sum out/CloversNX-Mali-v0.3-G720-AAudio.apk | tee out/CloversNX-Mali-v0.3-G720-AAudio.apk.sha256
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: CloversNX-Mali-v0.2-G720-Safe
+          name: CloversNX-Mali-v0.3-G720-AAudio
           path: out/
           if-no-files-found: error
           retention-days: 14
