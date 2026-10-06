@@ -156,7 +156,6 @@ print("defaulted fresh installs to Stability")
 es = root / "patch/android/values/strings-es.xml"
 es.write_text(r'''<?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_disclaimer">CloversNX Eden Mali ejecuta juegos de Nintendo Switch y está ajustado para dispositivos que usan el controlador GPU del sistema. No incluye juegos ni claves.</string>
     <string name="fps_tuning_description">Perfiles de rendimiento por dispositivo y controlador</string>
     <string name="profiles_matched_note">Los perfiles mostrados están filtrados para esta GPU y controlador.</string>
     <string name="launch_game_to_detect">Inicia un juego una vez para detectar la GPU y el controlador.</string>
