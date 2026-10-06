@@ -1,0 +1,66 @@
+name: CloversNX Mali v0.1
+
+on:
+  push:
+    branches:
+      - cloversnx-mali-v0.1
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout overlay
+        uses: actions/checkout@v4
+
+      - name: Checkout pinned Strato source
+        run: |
+          git clone https://github.com/strato-emu/strato.git strato-src
+          cd strato-src
+          git checkout ae1566a48285816a87e81d4aeb40bd2f4e56e60b
+          git submodule update --init --recursive
+
+      - name: Apply Mali-G720 profile
+        run: |
+          python3 switch-fork/apply_mali_profile.py strato-src
+          grep -R "CloversNX Mali-G720 compatibility profile" -n strato-src/app/src/main/cpp/skyline/gpu/trait_manager.cpp
+          grep -R 'applicationId "com.cloversgamers.cloversnx.mali"' -n strato-src/app/build.gradle
+
+      - name: Install Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install native build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build ccache
+          ln -sf /usr/bin/ninja strato-src/ninja
+
+      - name: Build release APK
+        working-directory: strato-src
+        env:
+          CMAKE_C_COMPILER_LAUNCHER: ccache
+          CMAKE_CXX_COMPILER_LAUNCHER: ccache
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon --stacktrace --build-cache --parallel --configure-on-demand assembleMainlineRelease
+
+      - name: Package APK
+        run: |
+          mkdir -p out
+          cp strato-src/app/build/outputs/apk/mainline/release/app-mainline-release.apk out/CloversNX-Mali-v0.1-G720.apk
+          sha256sum out/CloversNX-Mali-v0.1-G720.apk | tee out/CloversNX-Mali-v0.1-G720.apk.sha256
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: CloversNX-Mali-v0.1-G720
+          path: out/
+          if-no-files-found: error
+          retention-days: 14
