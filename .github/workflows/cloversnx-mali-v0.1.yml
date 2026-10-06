@@ -31,7 +31,7 @@ jobs:
       - name: Apply Mali-G720 profile
         run: |
           python3 switch-fork/apply_mali_profile.py strato-src
-          grep -R "CloversNX Mali-G720 compatibility profile" -n strato-src/app/src/main/cpp/skyline/gpu/trait_manager.cpp
+          grep -R "CloversNX Mali-G720 v0.2 safe profile" -n strato-src/app/src/main/cpp/skyline/gpu/trait_manager.cpp
           grep -R 'applicationId "com.cloversgamers.cloversnx.mali"' -n strato-src/app/build.gradle
 
       - name: Install Java 17
