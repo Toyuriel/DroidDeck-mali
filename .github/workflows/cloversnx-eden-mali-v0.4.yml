@@ -1,0 +1,164 @@
+name: CloversNX Eden Mali v0.4
+
+on:
+  push:
+    branches:
+      - cloversnx-eden-mali-v0.4
+  pull_request:
+    branches:
+      - main
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout CloversNX overlay
+        uses: actions/checkout@v4
+
+      - name: Checkout pinned Symbiosis
+        run: |
+          git clone https://github.com/sj0404-collab/symbiosis.git symbiosis
+          cd symbiosis
+          git checkout 4136bdbec4e5e7610fe9fde7b44e76a6d69f172c
+          test "$(git rev-parse HEAD)" = "4136bdbec4e5e7610fe9fde7b44e76a6d69f172c"
+
+      - name: Apply POCO X8 Pro Mali-G720 overlay
+        run: |
+          python3 switch-fork/patch_symbiosis_g720.py symbiosis
+          grep -n "CloversNX POCO X8 Pro profile" symbiosis/patch/symbiosis/mali_tuning.cpp
+          grep -n "CloversNX v0.4 is a reproducible stability build" symbiosis/patch/symbiosis/auto_modes.cpp
+
+      - name: Checkout pinned Eden v0.2.1
+        run: |
+          set -e
+          expected=58c1e20ee58efa3900ba616207d460886214480b
+          ok=0
+          for attempt in 1 2 3; do
+            rm -rf eden
+            if git clone --branch v0.2.1 https://git.eden-emu.dev/eden-emu/eden.git eden; then
+              ok=1
+              break
+            fi
+            sleep $((attempt * 5))
+          done
+
+          if [ "$ok" != "1" ]; then
+            echo "::warning::official Eden host unavailable; using public mirror containing the pinned commit"
+            rm -rf eden
+            git clone https://github.com/Josu-98/eden-zflip7.git eden
+            cd eden
+            git checkout "$expected"
+            cd ..
+          fi
+
+          cd eden
+          actual="$(git rev-parse HEAD)"
+          echo "Eden commit: $actual"
+          test "$actual" = "$expected"
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: Install Android native toolchain
+        run: |
+          sdkmanager --install             "ndk;28.2.13676358"             "cmake;3.31.6"             "build-tools;35.0.0"             "platforms;android-36" >/dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq glslang-tools ccache >/dev/null
+          ccache --set-config=max_size=3G
+          ccache --zero-stats
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: cloversnx-eden-v021-gradle-${{ runner.os }}-${{ hashFiles('switch-fork/patch_symbiosis_g720.py') }}
+          restore-keys: |
+            cloversnx-eden-v021-gradle-${{ runner.os }}-
+
+      - name: Cache native objects
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: cloversnx-eden-v021-mainline-ccache-${{ runner.os }}
+          restore-keys: |
+            cloversnx-eden-v021-mainline-ccache-
+
+      - name: Apply Symbiosis to Eden
+        run: |
+          bash symbiosis/tools/apply_patch.sh             --patch "$GITHUB_WORKSPACE/symbiosis/patch"             --eden "$GITHUB_WORKSPACE/eden"
+
+      - name: Brand isolated CloversNX package
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("eden/src/android/app/build.gradle.kts")
+          s = p.read_text(encoding="utf-8")
+          old = 'applicationId = "dev.eden.eden_emulator"'
+          if old not in s:
+              raise SystemExit("Eden applicationId changed")
+          s = s.replace(old, 'applicationId = "com.cloversgamers.cloversnx.edenmali"', 1)
+          s = s.replace(
+              'resValue("string", "app_name_suffixed", "Eden")',
+              'resValue("string", "app_name_suffixed", "CloversNX Eden Mali")',
+              1,
+          )
+          s = s.replace(
+              'variant.resValue("string", "app_name_suffixed", "Eden Debug")',
+              'variant.resValue("string", "app_name_suffixed", "CloversNX Eden Mali")',
+              1,
+          )
+          p.write_text(s, encoding="utf-8")
+          print("isolated app id and label applied")
+          PY
+          grep -n 'com.cloversgamers.cloversnx.edenmali' eden/src/android/app/build.gradle.kts
+          grep -n 'linkage, 3, 0, 7, "symbiosis_auto_mode"' eden/src/common/settings.h
+          grep -n 'CloversNX G720 safe profile' eden/src/common/symbiosis/mali_tuning.cpp
+
+      - name: Build mainline debug APK
+        working-directory: eden/src/android
+        env:
+          CCACHE_DIR: /home/runner/.cache/ccache
+          CCACHE_BASEDIR: ${{ github.workspace }}
+          CCACHE_COMPILERCHECK: content
+          CCACHE_HASHDIR: "false"
+        run: |
+          chmod +x gradlew
+          CCACHE_FLAGS="-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache"
+          ./gradlew assembleMainlineDebug             -PYUZU_ANDROID_ARGS="$CCACHE_FLAGS"             --parallel --build-cache --max-workers="$(nproc)"
+
+      - name: Package and verify APK
+        run: |
+          set -e
+          mkdir -p out
+          APK="$(find eden/src/android/app/build/outputs/apk -type f -name '*mainline-debug*.apk' | head -1)"
+          if [ -z "$APK" ]; then
+            APK="$(find eden/src/android/app/build/outputs/apk -type f -name '*.apk' | head -1)"
+          fi
+          test -n "$APK"
+          cp "$APK" out/CloversNX-Eden-Mali-v0.4-G720.apk
+          sha256sum out/CloversNX-Eden-Mali-v0.4-G720.apk | tee out/CloversNX-Eden-Mali-v0.4-G720.apk.sha256
+          unzip -l out/CloversNX-Eden-Mali-v0.4-G720.apk | grep 'lib/arm64-v8a/libyuzu-android.so'
+          ls -lh out/CloversNX-Eden-Mali-v0.4-G720.apk
+          ccache --show-stats | head -20 || true
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: CloversNX-Eden-Mali-v0.4-G720
+          path: out/
+          retention-days: 14
+          if-no-files-found: error
