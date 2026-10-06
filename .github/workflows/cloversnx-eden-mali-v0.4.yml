@@ -123,10 +123,10 @@ jobs:
               1,
           )
 
-          # Compile Eden without its web-service/telemetry module.
-          if '"-DENABLE_WEB_SERVICE=1"' not in s:
-              raise SystemExit("ENABLE_WEB_SERVICE build flag changed")
-          s = s.replace('"-DENABLE_WEB_SERVICE=1"', '"-DENABLE_WEB_SERVICE=0"', 1)
+          # Keep Eden's web-service code linked because its JNI currently
+          # depends on cpp-jwt even in offline builds. Privacy is enforced at
+          # Android's permission boundary below: without INTERNET the process
+          # cannot open network sockets.
           gradle.write_text(s, encoding="utf-8")
 
           manifest = Path("eden/src/android/app/src/main/AndroidManifest.xml")
@@ -141,11 +141,11 @@ jobs:
           m = m.replace('android:allowBackup="true"', 'android:allowBackup="false"', 1)
           manifest.write_text(m, encoding="utf-8")
 
-          print("privacy profile: web services OFF, INTERNET permission removed, backup disabled")
+          print("privacy profile: INTERNET permission removed, backup disabled")
           PY
 
           grep -n 'com.cloversgamers.cloversnx.edenmali' eden/src/android/app/build.gradle.kts
-          grep -n 'ENABLE_WEB_SERVICE=0' eden/src/android/app/build.gradle.kts
+          grep -n 'ENABLE_WEB_SERVICE=1' eden/src/android/app/build.gradle.kts
           if grep -q 'android.permission.INTERNET' eden/src/android/app/src/main/AndroidManifest.xml; then
             echo "::error::INTERNET permission still present"
             exit 1
@@ -179,6 +179,14 @@ jobs:
           cp "$APK" out/CloversNX-Eden-Mali-v0.4.1-ES-Privacy-G720.apk
           sha256sum out/CloversNX-Eden-Mali-v0.4.1-ES-Privacy-G720.apk | tee out/CloversNX-Eden-Mali-v0.4.1-ES-Privacy-G720.apk.sha256
           unzip -l out/CloversNX-Eden-Mali-v0.4.1-ES-Privacy-G720.apk | grep 'lib/arm64-v8a/libyuzu-android.so'
+
+          AAPT="$ANDROID_HOME/build-tools/35.0.0/aapt"
+          "$AAPT" dump permissions out/CloversNX-Eden-Mali-v0.4.1-ES-Privacy-G720.apk | tee out/permissions.txt
+          if grep -q 'android.permission.INTERNET' out/permissions.txt; then
+            echo "::error::Final APK unexpectedly contains INTERNET permission"
+            exit 1
+          fi
+
           ls -lh out/CloversNX-Eden-Mali-v0.4.1-ES-Privacy-G720.apk
           ccache --show-stats | head -20 || true
 
