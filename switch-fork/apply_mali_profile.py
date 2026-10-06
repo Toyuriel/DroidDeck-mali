@@ -24,7 +24,7 @@ replace(
 replace(
     "app/build.gradle",
     'versionName getGitVersionName()',
-    'versionName "0.2.0-mali-g720-safe"'
+    'versionName "0.3.0-mali-g720-aaudio"'
 )
 
 replace(
@@ -53,13 +53,13 @@ new = '''            case vk::DriverId::eArmProprietary: {
                 const std::string_view deviceName{deviceProperties.deviceName.data()};
                 const bool cloversMaliG720{deviceName.find("Mali-G720") != std::string_view::npos};
 
-                // CloversNX Mali v0.2 safe profile.
+                // CloversNX Mali v0.3 stability profile.
                 // r49 on the G720 is new enough for VK_EXT_extended_dynamic_state, so do not
                 // force the old vertex-binding path as v0.1 did. Pipeline compilation remains
                 // serialized to avoid proprietary-driver races.
                 if (cloversMaliG720) {
                     brokenMultithreadedPipelineCompilation = true;
-                    LOGI("CloversNX Mali-G720 v0.2 safe profile enabled for {}", deviceName);
+                    LOGI("CloversNX Mali-G720 v0.3 stability profile enabled for {}", deviceName);
                 }
 
                 brokenSpirvAccessChainOpt = true;
@@ -117,7 +117,7 @@ replace(
 replace(
     "app/src/main/cpp/skyline/gpu.cpp",
     'state.os->publicAppFilesPath + "vk_graphics_pipeline_cache/" + titleId',
-    'state.os->publicAppFilesPath + "vk_graphics_pipeline_cache_v02/" + titleId'
+    'state.os->publicAppFilesPath + "vk_graphics_pipeline_cache_v03/" + titleId'
 )
 
 # Conservative defaults for Mali-G720. These reduce queued work and swapchain
@@ -143,4 +143,51 @@ replace(
     'var executorFlushThreshold by sharedPreferences(context, 96, prefName = prefName)'
 )
 
-print("CloversNX Mali v0.2 safe profile applied successfully")
+# Android 16 stability: build cubeb with AAudio in addition to OpenSL ES.
+# The test log ends immediately after OpenSL enters cubeb_stream_init.
+replace(
+    "app/CMakeLists.txt",
+    'set(USE_AAUDIO OFF)',
+    'set(USE_AAUDIO ON)'
+)
+
+# Use shared AAudio mode instead of requesting an exclusive stream.
+replace(
+    "app/libraries/cubeb/CMakeLists.txt",
+    '  target_compile_definitions(cubeb PRIVATE CUBEB_AAUDIO_EXCLUSIVE_STREAM)',
+    '  # CloversNX: shared AAudio mode for stability'
+)
+
+audio = ROOT / "app/libraries/audio-core/sink/cubeb_sink.cpp"
+text = audio.read_text(encoding="utf-8")
+old = 'if (cubeb_init(&ctx, "yuzu", nullptr) != CUBEB_OK) {'
+new = 'if (cubeb_init(&ctx, "CloversNX", "aaudio") != CUBEB_OK) {'
+if old not in text:
+    raise SystemExit("Cubeb sink init changed upstream; refusing unsafe audio patch")
+text = text.replace(old, new, 1)
+
+old = '''        LOG_CRITICAL(Audio_Sink, "cubeb_init failed");
+        return;
+    }
+
+    if (target_device_name != auto_device_name'''
+new = '''        LOG_CRITICAL(Audio_Sink, "cubeb_init failed");
+        return;
+    }
+
+    LOG_INFO(Service_Audio, "CloversNX cubeb backend: {}", cubeb_get_backend_id(ctx));
+
+    if (target_device_name != auto_device_name'''
+if old not in text:
+    raise SystemExit("Cubeb post-init block changed upstream; refusing unsafe audio patch")
+text = text.replace(old, new, 1)
+
+text = text.replace(
+    'if (cubeb_init(&ctx, "yuzu Latency Getter", nullptr) != CUBEB_OK) {',
+    'if (cubeb_init(&ctx, "CloversNX Latency Getter", "aaudio") != CUBEB_OK) {',
+    1
+)
+audio.write_text(text, encoding="utf-8")
+print("patched app/libraries/audio-core/sink/cubeb_sink.cpp for AAudio")
+
+print("CloversNX Mali v0.3 stability profile applied successfully")
