@@ -87,7 +87,7 @@ static char *read_cmdline(size_t *size_out) {
   return buf;
 }
 
-static void reexec_with_wayland_llvmpipe(void) {
+static void reexec_with_x11_llvmpipe(void) {
   if (getenv("BL_STEAMWEBHELPER_GRAPHICS_READY")) return;
 
   size_t bytes = 0;
@@ -102,14 +102,13 @@ static void reexec_with_wayland_llvmpipe(void) {
     off += n + 1;
   }
 
-  /*
-   * Eleven Chromium switches plus NULL. Xwayland in the Android guest has no DRI3, so Chromium
-   * cannot allocate/import native GpuMemoryBuffers. Keep the final compositor on ANGLE/OpenGL,
-   * but raster page/canvas content in-process/CPU and upload ordinary textures. Steam's CEF build
-   * keeps CanvasOopRasterization enabled even with --disable-oop-rasterization, so disable the
-   * feature explicitly too.
-   */
-  char **argv = calloc(argc + 12, sizeof(*argv));
+  /* Keep the X11/ANGLE/llvmpipe profile that reached Steam's UI. Do not add another
+   * --disable-features: Chromium treats that as a replacement for Valve's list, including
+   * SpareRendererForSitePerProcess. The CPU-raster experiment coincided with repeated renderer
+   * deaths and the shared JS context error page, before any Steam frame reached the host.
+   * llvmpipe already executes the GL work in software without touching PanVK.
+   * Eight switches plus NULL. */
+  char **argv = calloc(argc + 9, sizeof(*argv));
   if (!argv) { free(cmd); return; }
 
   size_t ai = 0;
@@ -127,16 +126,13 @@ static void reexec_with_wayland_llvmpipe(void) {
   argv[ai++] = "--disable-zero-copy";
   argv[ai++] = "--disable-oop-rasterization";
   argv[ai++] = "--disable-accelerated-video-decode";
-  argv[ai++] = "--disable-gpu-rasterization";
-  argv[ai++] = "--disable-features=CanvasOopRasterization,CanvasOopWithoutGpuTileRaster";
-  argv[ai++] = "--disable-partial-raster";
   argv[ai] = NULL;
 
   isolate_webhelper_graphics();
   setenv("BL_STEAMWEBHELPER_GRAPHICS_READY", "1", 1);
 
   static const char msg[] =
-      "DroidDeck: re-exec steamwebhelper on X11 + ANGLE/GL + llvmpipe; CPU raster + GMB/zero-copy disabled\n";
+      "DroidDeck: re-exec steamwebhelper on X11 + ANGLE/GL + llvmpipe; GMB/zero-copy/OOP-raster disabled; Valve features preserved\n";
   (void)write(STDERR_FILENO, msg, sizeof(msg) - 1);
 
   /* /proc/self/exe preserves Steam's exact webhelper binary even after client updates. */
@@ -159,7 +155,7 @@ static void droiddeck_steamwebhelper_graphics(void) {
   const char *enabled = getenv("BL_STEAM_CEF_ISOLATED");
   if (enabled != NULL && strcmp(enabled, "1") == 0) {
     if (!getenv("BL_STEAMWEBHELPER_GRAPHICS_READY")) {
-      reexec_with_wayland_llvmpipe();
+      reexec_with_x11_llvmpipe();
       return;
     }
     static const char msg[] =

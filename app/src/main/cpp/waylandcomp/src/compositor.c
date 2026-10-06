@@ -767,11 +767,10 @@ static void take_shm(struct surface *s, struct wl_shm_buffer *shm, struct wl_res
 static struct surface *g_hud_surface;
 
 /*
- * Gamescope occasionally commits a 1x1 dmabuf while its Xwayland window is being rebuilt between
- * Steam UI views. On Android that outer Wayland surface is the whole visible session, so accepting
- * that tiny buffer turns an internal rebuild into a full-scene flash. Ignore only those tiny
- * replacement buffers. A NULL attach must be honored immediately: holding the previous dmabuf can
- * keep a stale/dark frame latched and can delay buffer release while Gamescope is trying to recover.
+ * Gamescope uses several surfaces, including a 1x1 black backing buffer stretched by wp_viewport.
+ * A small buffer is valid content, not evidence of a transient rebuild: keeping its predecessor
+ * can stretch an old Steam frame behind the new layers. Every committed buffer replaces the old
+ * one. The helpers below identify Gamescope only for diagnostics, never to suppress its commits.
  */
 static int is_gamescope_surface(const struct surface *s) {
     struct client_info *ci = client_info_of(wl_resource_get_client(s->resource));
@@ -793,14 +792,6 @@ extern void banner_on_game_frame(void);
 extern void banner_on_game_program(int pid, const char *program);
 
 static void take_dmabuf(struct surface *s, struct dmabuf_buffer *b, struct wl_resource *buffer) {
-    if (has_fullsize_gamescope_frame(s) && b->width <= 4 && b->height <= 4) {
-        char name[160];
-        describe(s, name, sizeof(name));
-        banner_log("vulkan", "%s transient %dx%d frame ignored; keeping %dx%d",
-                   name, b->width, b->height, s->buf_w, s->buf_h);
-        wl_buffer_send_release(buffer);
-        return;
-    }
     if (s->dmabuf != buffer || s->dmabuf_buf != b) {
         drop_dmabuf(s, 1);
         s->dmabuf = buffer;

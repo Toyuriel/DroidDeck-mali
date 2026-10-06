@@ -13,8 +13,7 @@ import java.io.File
 /**
  * Downloadable runtime support for ARM Mali/MediaTek.
  *
- * The APK contains the compositor, but the guest-side bridge is versioned separately so libhybris,
- * sysvk and the Wayland WSI layer can be fixed without publishing a whole new APK. The package is a
+ * The APK contains the compositor, but native PanVK is versioned separately. The package is a
  * tar.zst rooted at / and contains only DroidDeck-owned files under /usr/local/lib/droiddeck-mali
  * plus its Vulkan implicit-layer manifest.
  */
@@ -40,6 +39,8 @@ object MaliSupportPackage {
     fun isInstalled(context: Context): Boolean = installedVersion(context) != null
 
     private fun requiredFiles(context: Context) = listOf(
+        File(bridgeDir(context), "panvk/libvulkan_panfrost.so"),
+        File(bridgeDir(context), "panvk/panfrost_icd.json"),
         File(bridgeDir(context), "lib/libsysvk.so"),
         File(bridgeDir(context), "lib/libhardware.so"),
         File(bridgeDir(context), "lib/libVkLayer_window_system_integration.so"),
@@ -94,6 +95,8 @@ object MaliSupportPackage {
             val stagedBridge = File(staging, "usr/local/lib/droiddeck-mali")
             val stagedWsi = File(staging, "usr/share/vulkan/implicit_layer.d/droiddeck-mali-wsi.json")
             val required = listOf(
+                File(stagedBridge, "panvk/libvulkan_panfrost.so"),
+                File(stagedBridge, "panvk/panfrost_icd.json"),
                 File(stagedBridge, "lib/libsysvk.so"),
                 File(stagedBridge, "lib/libhardware.so"),
                 File(stagedBridge, "lib/libVkLayer_window_system_integration.so"),

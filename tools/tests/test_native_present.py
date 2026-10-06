@@ -59,6 +59,10 @@ class NativePresentTest(unittest.TestCase):
         start = source.index('enum surface_role {')
         end = source.index('\nstatic struct wl_list g_surfaces', start)
         (self.work / 'compositor_surface_types.c').write_text(source[start:end])
+        internal = (BACKEND / 'src/compositor_internal.h').read_text()
+        start = internal.index('struct dmabuf_buffer {')
+        end = internal.index('\n};', start) + 3
+        (self.work / 'compositor_dmabuf_type.c').write_text('#define MAX_PLANES 4\n' + internal[start:end])
 
         def function(signature):
             start = source.index(signature)
@@ -69,6 +73,8 @@ class NativePresentTest(unittest.TestCase):
             'static void xdg_toplevel_set_fullscreen(',
             'static void xdg_toplevel_unset_fullscreen(',
             'static void surface_attach(',
+            'static void surface_size(',
+            'static void take_dmabuf(',
             'static void surface_commit(',
         ]
         (self.work / 'compositor_remap_under_test.c').write_text(

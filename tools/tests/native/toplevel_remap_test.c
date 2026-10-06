@@ -12,7 +12,7 @@
 
 enum resource_kind { SURFACE, TOPLEVEL, XDG_SURFACE, SHM_BUFFER, DMA_BUFFER };
 struct wl_shm_buffer { int width, height; };
-struct dmabuf_buffer { int width, height; };
+#include "compositor_dmabuf_type.c"
 #include "compositor_surface_types.c"
 
 static struct wl_display *g_display;
@@ -20,6 +20,14 @@ static int g_output_w = 1564, g_output_h = 720;
 static unsigned configures, role_configures, serial, render_requests;
 static unsigned gpu_releases, shm_releases;
 static int configured_width, configured_height, configured_fullscreen;
+static struct surface *g_hud_surface;
+static int64_t g_hud_last_ns;
+static int g_hud_fresh, g_zero_copy;
+static unsigned g_stat_dmabuf;
+struct client_info { int pid; char name[64]; };
+static struct client_info gamescope = {.pid = 42, .name = "gamescope"};
+#define WLOGE(...) ((void)0)
+#define FOURCC(a, b, c, d) ((uint32_t)(a) | ((uint32_t)(b) << 8) | ((uint32_t)(c) << 16) | ((uint32_t)(d) << 24))
 
 void wl_list_init(struct wl_list *list) { list->prev = list->next = list; }
 void wl_list_remove(struct wl_list *list) {
@@ -79,17 +87,27 @@ static struct dmabuf_buffer *get_dmabuf(struct wl_resource *resource) {
 }
 static void drop_dmabuf(struct surface *surface, int paced) {
     if (surface->dmabuf) wl_buffer_send_release(surface->dmabuf);
+    if (surface->dmabuf_buf) surface->dmabuf_buf->refs--;
     surface->dmabuf = NULL;
     surface->dmabuf_buf = NULL;
 }
-static void take_dmabuf(struct surface *surface, struct dmabuf_buffer *buffer, struct wl_resource *resource) {
-    drop_dmabuf(surface, 1);
-    surface->dmabuf = resource;
-    surface->dmabuf_buf = buffer;
-    surface->buf_w = buffer->width;
-    surface->buf_h = buffer->height;
-    surface->has_content = 1;
-}
+static void on_dmabuf_destroyed(struct wl_listener *listener, void *data) {}
+struct wl_client *wl_resource_get_client(struct wl_resource *resource) { return NULL; }
+static struct client_info *client_info_of(struct wl_client *client) { return &gamescope; }
+static int64_t now_ns(void) { return 1000000000LL; }
+static struct vkp_image *vkp_image_from_dmabuf(int fd, uint32_t fmt, uint64_t mod, int w, int h,
+                                             uint32_t stride, uint32_t offset) { return (void *)1; }
+static void vkp_image_destroy(struct vkp_image *image) {}
+static void sc_layer_probe_dmabuf_fd(int fd) {}
+static int ahb_swapchain_has_ahb(struct dmabuf_buffer *buffer) { return 0; }
+static uint32_t ahb_swapchain_ahb_format(struct dmabuf_buffer *buffer) { return 0; }
+static const char *banner_ahb_format_name(uint32_t fmt) { return "unused"; }
+static int banner_color_hdr_open(void) { return 0; }
+static const char *vkp_modifier_name(uint64_t mod) { return "linear"; }
+static const char *vkp_gpu_name(void) { return "test GPU"; }
+static void banner_on_game_surface(const char *name, const char *gpu) {}
+static void banner_on_game_program(int pid, const char *name) {}
+static void banner_on_game_frame(void) {}
 static void take_shm(struct surface *surface, struct wl_shm_buffer *buffer, struct wl_resource *resource) {
     surface->buf_w = buffer->width;
     surface->buf_h = buffer->height;
@@ -101,7 +119,9 @@ static void surface_drop_idle(struct surface *surface) {}
 static void surface_hold_idle(struct surface *surface, struct wl_resource *buffer) {}
 static void cursor_publish_hidden(void) {}
 static void cursor_publish_buffer(struct surface *surface, struct wl_resource *buffer) {}
-static int has_fullsize_gamescope_frame(const struct surface *surface) { return 0; }
+static int has_fullsize_gamescope_frame(const struct surface *s) {
+    return s->has_content && s->buf_w >= 640 && s->buf_h >= 360;
+}
 static void describe(const struct surface *surface, char *out, size_t size) { snprintf(out, size, "Gamescope"); }
 static void banner_log(const char *area, const char *format, ...) {}
 static void constraints_surface_commit(struct surface *surface) {}
@@ -139,7 +159,7 @@ int main(void) {
     surface_commit(NULL, &resource); /* metadata-only commit is not an unmap */
     assert(configures == 1);
 
-    struct dmabuf_buffer gpu = {.width = 1564, .height = 720};
+    struct dmabuf_buffer gpu = {.width = 1564, .height = 720, .img = (void *)1, .refs = 1};
     struct wl_resource gpu_resource = {.object = {.id = DMA_BUFFER}, .data = &gpu};
     struct wl_shm_buffer shm = {.width = 1564, .height = 720};
     struct wl_resource shm_resource = {.object = {.id = SHM_BUFFER}, .data = &shm};
@@ -167,6 +187,30 @@ int main(void) {
         surface_commit(NULL, &resource);
         assert(configures == configured_before_unmap + 1); /* no configure loop */
     }
+
+    /* Gamescope replaces a full-screen image with a stretched 1x1 backing plane when its UI
+     * gains transparent layers. Old code suppressed that buffer and retained the old picture. */
+    struct dmabuf_buffer backing = {.width = 1, .height = 1, .img = (void *)2, .refs = 1};
+    struct wl_resource backing_resource = {.object = {.id = DMA_BUFFER}, .data = &backing};
+    for (unsigned cycle = 0; cycle < 120; cycle++) {
+        surface_attach(NULL, &resource, &gpu_resource, 0, 0);
+        surface_commit(NULL, &resource);
+        unsigned before_release = gpu_releases;
+        surface.pending_dst_set = 1;
+        surface.pending_dst[0] = 1564;
+        surface.pending_dst[1] = 720;
+        surface_attach(NULL, &resource, &backing_resource, 0, 0);
+        surface_commit(NULL, &resource);
+        assert(surface.dmabuf == &backing_resource && surface.has_content);
+        assert(surface.buf_w == 1 && surface.buf_h == 1 && gpu_releases == before_release + 1);
+        assert(gpu.refs == 1 && backing.refs == 2); /* old picture is no longer retained */
+        int width, height;
+        surface_size(&surface, &width, &height);
+        assert(width == 1564 && height == 720); /* viewport still covers the full display */
+    }
+    surface_attach(NULL, &resource, NULL, 0, 0);
+    surface_commit(NULL, &resource);
+    assert(backing.refs == 1 && !surface.has_content);
 
     unsigned before = configures;
     xdg_toplevel_set_fullscreen(NULL, &toplevel, NULL);

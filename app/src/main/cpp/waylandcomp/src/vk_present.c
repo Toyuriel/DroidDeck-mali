@@ -1,5 +1,5 @@
-/* Android-surface render backend - see vk_present.h. Uses Turnip via vk_loader
- * (g_vk.*), not the process-default system Adreno driver. */
+/* Android-surface render backend - see vk_present.h. vk_loader selects Turnip on Adreno
+ * and the Android system Vulkan driver on Mali. */
 #define _POSIX_C_SOURCE 200809L
 #include "vk_present.h"
 #include "vk_loader.h"
@@ -475,18 +475,25 @@ static int dev_init(void) {
     }
     g_vk.GetPhysicalDeviceMemoryProperties(g_pd, &g_memprops);
 
-    /* Verify the dmabuf-import extensions are present, and log any that are missing. */
-    const char *dev_exts[7] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME, "VK_KHR_external_memory_fd",
+    /* Imported images cross driver implementations (PanVK -> Android Mali on non-Adreno).
+     * FOREIGN ownership barriers are valid only when this extension is enabled. */
+    const char *dev_exts[8] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME, "VK_KHR_external_memory_fd",
                                "VK_EXT_external_memory_dma_buf", "VK_EXT_image_drm_format_modifier",
-                               "VK_KHR_image_format_list", NULL, NULL};
-    uint32_t n_dev_exts = 5;
+                               "VK_KHR_image_format_list", VK_EXT_QUEUE_FAMILY_FOREIGN_EXTENSION_NAME,
+                               NULL, NULL};
+    uint32_t n_dev_exts = 6;
     uint32_t ne = 0;
     g_vk.EnumerateDeviceExtensionProperties(g_pd, NULL, &ne, NULL);
     VkExtensionProperties *exts = calloc(ne ? ne : 1, sizeof(*exts));
     g_vk.EnumerateDeviceExtensionProperties(g_pd, NULL, &ne, exts);
-    for (unsigned i = 0; i < 5; i++)
-        if (!has_ext(exts, ne, dev_exts[i]))
-            LOGE("present: driver MISSING %s (dmabuf import will fail)", dev_exts[i]);
+    for (unsigned i = 0; i < n_dev_exts; i++) {
+        if (!has_ext(exts, ne, dev_exts[i])) {
+            banner_log("error", "Android Vulkan driver lacks required image-sharing extension %s", dev_exts[i]);
+            free(exts);
+            g_dev_state = -1;
+            return -1;
+        }
+    }
     /* HDR sessions only: the HDR10 swapchain (frame generation) can carry the game's metadata. */
     int want_hdr_md = 0;
     if (banner_color_requested()) {

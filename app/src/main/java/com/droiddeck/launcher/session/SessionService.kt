@@ -301,9 +301,8 @@ class SessionService : Service() {
         killStragglers()
         SessionEvents.record("startup.kill_stragglers.ok")
 
-        // Keep the device-specific Mali bridge current independently from the APK. A previously
-        // downloaded package must not pin an old libhybris forever just because the APK also
-        // contains a fallback copy. Catalog/network failure is non-fatal when something is installed.
+        // Keep native PanVK support current independently from the APK. Catalog/network failure
+        // is non-fatal when a complete package is already installed.
         if (GpuInfo.detect().family == GpuInfo.Family.MALI) {
             val before = MaliSupportPackage.installedVersion(this)
             SessionEvents.record("startup.mali_support.begin", mapOf("installed" to (before ?: "none")))
@@ -627,17 +626,17 @@ class SessionService : Service() {
         val maliAndroidVulkan = GpuInfo.detect().family == GpuInfo.Family.MALI
         if (maliAndroidVulkan) {
             // The Linux desktop itself deliberately stays software-only on Mali. This lets LXQt
-            // and labwc prove the guest/Wayland path independently from the still-experimental
-            // Android-vendor Vulkan bridge. Steam and GPU-launched programs keep using the bridge.
+            // and labwc use the guest/Wayland path independently from experimental PanVK.
+            // Steam and GPU-launched programs use PanVK with the Kbase FD broker.
             if (SessionState.mode == MODE_DESKTOP) {
                 guest.add("BL_MALI_ANDROID_VULKAN=0")
                 guest.add("BL_DESKTOP_SOFTWARE=1")
                 Log.i(TAG, "Mali desktop: Vulkan bridge disabled; forcing software pixman path")
             } else {
-                // Mali does not use Turnip/Freedreno. The session script selects the packaged
-                // glibc -> libhybris -> Android vendor Vulkan bridge and its Wayland WSI layer.
+                // Mali does not use Turnip/Freedreno. The session script selects native glibc
+                // PanVK; the Android compositor presents through the system Vulkan driver.
                 guest.add("BL_MALI_ANDROID_VULKAN=1")
-                Log.i(TAG, "Mali session: Android vendor Vulkan bridge requested; Turnip/Freedreno disabled")
+                Log.i(TAG, "Mali session: native PanVK/Kbase requested; Android system Vulkan presentation")
             }
         } else {
             LinuxRuntime.vulkanIcd(this)?.let { guest.add("VK_ICD_FILENAMES=" + it.path) }
