@@ -23,6 +23,7 @@
 #include "banner_color.h"
 
 extern int banner_wayland_run(void);
+extern int banner_wayland_set_log_path(const char *path);
 extern void banner_wayland_send_pointer(int action, int x, int y);
 extern void banner_wayland_send_touch(int action, int pointer_id, int x, int y);
 extern int  banner_cursor_snapshot(int *out, int cap);
@@ -459,6 +460,14 @@ Java_com_droiddeck_launcher_wayland_WaylandCompositor_nativeLogDisplay(JNIEnv *e
     char *s = dup_jstr(env, message);
     if (s) banner_log("display", "%s", s);
     free(s);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_droiddeck_launcher_wayland_WaylandCompositor_nativeSetLogPath(JNIEnv *env, jclass clazz, jstring path) {
+    char *s = dup_jstr(env, path);
+    int result = banner_wayland_set_log_path(s);
+    free(s);
+    return result == 0 ? JNI_TRUE : JNI_FALSE;
 }
 
 /* The same under the "perf" area: facts the app knows about the session's performance setup (the CPU

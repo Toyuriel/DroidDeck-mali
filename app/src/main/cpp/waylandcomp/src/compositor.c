@@ -65,6 +65,7 @@
 #define SESSION_LOG_DIR "/storage/emulated/0/Download/Wayland-logs"
 
 static FILE *g_log;
+static char g_log_path[512];
 
 /* Lines logged before the session file exists are kept here and written into it, in order, the
  * moment it opens - the compositor runs on its own thread, so anything the app reports as that
@@ -95,49 +96,65 @@ void banner_log(const char *tag, const char *fmt, ...) {
     pthread_mutex_unlock(&g_log_lock);
 }
 
-static void open_session_log(void) {
-    char path[256], stamp[32];
+/* The compositor outlives sessions. Retarget its actual file, rather than just the Java pointer
+ * or environment variable, so the next diagnostic ZIP contains the frames from THIS session. */
+int banner_wayland_set_log_path(const char *path) {
+    if (!path || !*path || strlen(path) >= sizeof(g_log_path)) return -1;
+    char stamp[32];
     time_t now = time(NULL);
     struct tm tm;
     FILE *f;
 
-    localtime_r(&now, &tm);
-    strftime(stamp, sizeof(stamp), "%Y-%m-%d_%H-%M-%S", &tm);
-    /* The app names the file when it has a session folder to put it in, so one session's logs sit
-     * together; without that we keep our own dated file. The folder is made on the Java side. */
-    const char *given = getenv("BL_WAYLAND_LOG");
-    if (given && *given) {
-        snprintf(path, sizeof(path), "%s", given);
-    } else {
-        mkdir("/storage/emulated/0/Download", 0775);
-        if (mkdir(SESSION_LOG_DIR, 0775) != 0 && errno != EEXIST)
-            WLOGE("can't create %s: %s", SESSION_LOG_DIR, strerror(errno));
-        snprintf(path, sizeof(path), "%s/wayland-%s.log", SESSION_LOG_DIR, stamp);
+    pthread_mutex_lock(&g_log_lock);
+    if (g_log && !strcmp(g_log_path, path)) {
+        pthread_mutex_unlock(&g_log_lock);
+        return 0;
     }
-    if (!(f = fopen(path, "w"))) {
+    if (!(f = fopen(path, "a"))) {
+        pthread_mutex_unlock(&g_log_lock);
         WLOGE("can't open session log %s: %s", path, strerror(errno));
-        return;
+        return -1;
     }
+    localtime_r(&now, &tm);
     setvbuf(f, NULL, _IOLBF, 0);
     strftime(stamp, sizeof(stamp), "%Y-%m-%d %H:%M:%S", &tm);
     fprintf(f,
             "Bannerlator Wayland session\n"
             "===========================\n"
             "Started   %s\n"
-            "Display   Wayland: Windows programs draw through the Bannerlator compositor.\n"
-            "          No X server is used for this session.\n"
+            "Display   Wayland: the Android compositor presents the Linux session.\n"
             "Log       %s\n\n"
             "Time          Area      Event\n"
             "------------  --------  -----------------------------------------------------\n",
             stamp, path);
     /* Publish the file and flush anything logged before it existed, in one critical section, so a
      * line from another thread can never land ahead of the header or be dropped between the two. */
-    pthread_mutex_lock(&g_log_lock);
     for (int i = 0; i < g_prelog_n; i++) { fputs(g_prelog[i], f); free(g_prelog[i]); g_prelog[i] = NULL; }
     g_prelog_n = 0;
+    if (g_log) fclose(g_log);
     g_log = f;
+    snprintf(g_log_path, sizeof(g_log_path), "%s", path);
     pthread_mutex_unlock(&g_log_lock);
     WLOGI("session log: %s", path);
+    return 0;
+}
+
+static void open_session_log(void) {
+    char path[512], stamp[32];
+    const char *given = getenv("BL_WAYLAND_LOG");
+    if (given && *given) {
+        banner_wayland_set_log_path(given);
+        return;
+    }
+    time_t now = time(NULL);
+    struct tm tm;
+    localtime_r(&now, &tm);
+    strftime(stamp, sizeof(stamp), "%Y-%m-%d_%H-%M-%S", &tm);
+    mkdir("/storage/emulated/0/Download", 0775);
+    if (mkdir(SESSION_LOG_DIR, 0775) != 0 && errno != EEXIST)
+        WLOGE("can't create %s: %s", SESSION_LOG_DIR, strerror(errno));
+    snprintf(path, sizeof(path), "%s/wayland-%s.log", SESSION_LOG_DIR, stamp);
+    banner_wayland_set_log_path(path);
 }
 
 /* At most ~10 lines a second for chatty events (window moves), so a drag can't flood logcat. */
