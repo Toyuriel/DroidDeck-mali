@@ -187,6 +187,18 @@ text = text.replace(
     'if (cubeb_init(&ctx, "CloversNX Latency Getter", "aaudio") != CUBEB_OK) {',
     1
 )
+
+text = text.replace(
+    '        auto init_error{0};',
+    '        LOG_INFO(Service_Audio, "CloversNX entering cubeb_stream_init");\n        auto init_error{0};',
+    1
+)
+text = text.replace(
+    '        if (init_error != CUBEB_OK) {',
+    '        LOG_INFO(Service_Audio, "CloversNX cubeb_stream_init returned {}", init_error);\n\n        if (init_error != CUBEB_OK) {',
+    1
+)
+
 audio.write_text(text, encoding="utf-8")
 print("patched app/libraries/audio-core/sink/cubeb_sink.cpp for AAudio")
 
