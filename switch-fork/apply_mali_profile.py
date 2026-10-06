@@ -215,6 +215,32 @@ text = text.replace(
     1
 )
 
+text = text.replace(
+    '''    void Finalize() override {
+        Stop();
+        cubeb_stream_destroy(stream_backend);
+    }''',
+    '''    void Finalize() override {
+        if (!stream_backend) {
+            return;
+        }
+        Stop();
+        cubeb_stream_destroy(stream_backend);
+        stream_backend = nullptr;
+    }''',
+    1
+)
+text = text.replace(
+    '        if (!ctx || !paused) {',
+    '        if (!ctx || !stream_backend || !paused) {',
+    1
+)
+text = text.replace(
+    '        if (!ctx || paused) {',
+    '        if (!ctx || !stream_backend || paused) {',
+    1
+)
+
 audio.write_text(text, encoding="utf-8")
 print("patched app/libraries/audio-core/sink/cubeb_sink.cpp for AAudio")
 
