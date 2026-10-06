@@ -327,26 +327,12 @@ es.write_text(r'''<?xml version="1.0" encoding="utf-8"?>
 ''', encoding="utf-8")
 print("wrote Symbiosis Spanish resources")
 
-# Teach the Symbiosis apply script to merge the Spanish overlay into Eden's
-# existing values-es resources.
-apply = root / "tools/apply_patch.sh"
-ap = apply.read_text(encoding="utf-8")
-needle = '''python3 "$SELF_DIR/merge_strings.py" \\
-  "$A/res/values-ru/strings.xml" "$P/android/values/strings-ru.xml" "$A/res/values-ru/strings.xml"
-'''
-replacement = needle + '''if [ -f "$P/android/values/strings-es.xml" ]; then
-  mkdir -p "$A/res/values-es"
-  if [ ! -f "$A/res/values-es/strings.xml" ]; then
-    printf '%s\\n' '<?xml version="1.0" encoding="utf-8"?><resources></resources>' > "$A/res/values-es/strings.xml"
-  fi
-  python3 "$SELF_DIR/merge_strings.py" \\
-    "$A/res/values-es/strings.xml" "$P/android/values/strings-es.xml" "$A/res/values-es/strings.xml"
-fi
-'''
-if needle not in ap:
-    raise SystemExit("Spanish merge insertion point changed")
-apply.write_text(ap.replace(needle, replacement, 1), encoding="utf-8")
-print("wired Spanish resources into apply_patch.sh")
+# Validate the Spanish overlay here. It will be merged into the default
+# resources after Symbiosis is applied, so Eden's official values-es file stays
+# untouched and Android falls back to our Spanish text only for new fork strings.
+import xml.etree.ElementTree as ET
+ET.parse(es)
+print("validated Symbiosis Spanish resources")
 
 # Translate hard-coded auto-mode text that is not backed by Android resources.
 auto = root / "patch/symbiosis/auto_modes.cpp"
