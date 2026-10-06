@@ -1098,7 +1098,8 @@ static void surface_commit(struct wl_client *c, struct wl_resource *r) {
     struct surface *s = wl_resource_get_user_data(r);
     struct surface *child;
 
-    /* xdg-shell: the initial commit of a toplevel is answered with a configure. One is also sent
+    /* xdg-shell: the initial commit of a toplevel (including a remap after NULL attach) gets a
+     * configure. One is also sent
      * at get_toplevel, which Wine's driver has always had; a client that waits for the reply to its
      * commit on a queue of its own (wlroots' Wayland backend - the desktop's labwc) can read that
      * early one onto the wrong queue and would wait for ever. */
@@ -1156,11 +1157,19 @@ static void surface_commit(struct wl_client *c, struct wl_resource *r) {
             drop_dmabuf(s, 1);
             take_shm(s, shm, buffer);
         } else {
+            if (!buffer && s->xdg_toplevel && s->has_content) {
+                /* NULL unmaps the xdg role, including its configured/fullscreen state. libdecor
+                 * waits for a NEW configure on the next empty commit before drawing again.
+                 * Keeping toplevel_committed latched starves that request and leaves Steam
+                 * waiting for its first frame, even though the client is running. */
+                s->toplevel_committed = 0;
+                s->fullscreen = 0;
+            }
             if (!buffer && has_fullsize_gamescope_frame(s)) {
                 char name[160];
                 describe(s, name, sizeof(name));
-                banner_log("vulkan", "%s NULL attach releases previous %dx%d frame",
-                           name, s->buf_w, s->buf_h);
+                banner_log("vulkan", "%s NULL attach releases previous %dx%d frame (%s)",
+                           name, s->buf_w, s->buf_h, s->xdg_toplevel ? "toplevel" : "subsurface");
             }
             drop_dmabuf(s, 1);
             s->has_content = 0;
@@ -1513,17 +1522,23 @@ static void send_toplevel_configure(struct surface *s) {
                                 g_output_h > 0 ? g_output_h : 0, &states);
     wl_array_release(&states);
     xdg_surface_send_configure(s->xdg_surface, wl_display_next_serial(g_display));
+    char name[160];
+    describe(s, name, sizeof(name));
+    banner_log("window", "configured %s %dx%d%s", name, g_output_w, g_output_h,
+               s->fullscreen ? " fullscreen" : "");
 }
 static void xdg_toplevel_set_fullscreen(struct wl_client *c, struct wl_resource *r,
                                         struct wl_resource *output) {
     struct surface *s = wl_resource_get_user_data(r);
-    if (!s || !s->xdg_surface || !s->xdg_toplevel || s->fullscreen) return;
+    if (!s || !s->xdg_surface || !s->xdg_toplevel) return;
+    /* A repeated request still requires a configure reply. Gamescope requests fullscreen again
+     * after being hidden; silently dropping it can leave libdecor waiting indefinitely. */
     s->fullscreen = 1;
     send_toplevel_configure(s);
 }
 static void xdg_toplevel_unset_fullscreen(struct wl_client *c, struct wl_resource *r) {
     struct surface *s = wl_resource_get_user_data(r);
-    if (!s || !s->xdg_surface || !s->xdg_toplevel || !s->fullscreen) return;
+    if (!s || !s->xdg_surface || !s->xdg_toplevel) return;
     s->fullscreen = 0;
     send_toplevel_configure(s);
 }
