@@ -86,6 +86,11 @@ class GpuDriversState(
     val canRestoreBundled: Boolean = false,
     /** The Android + Linux bundle both drivers are set to ("DD-Turnip 0.1.0"), or null. */
     val activeBundle: String? = null,
+    val mali: Boolean = false,
+    val maliSupportVersion: String? = null,
+    val maliSupportStatus: String = "",
+    val maliSupportBusy: Boolean = false,
+    val maliSupportPercent: Int = -1,
 ) {
     /** The pair both drivers are set to, if they make one. */
     val activePair: PairRow? get() = pairs.firstOrNull { it.active }
@@ -105,6 +110,7 @@ class GpuDriversActions(
     /** The tab's own import: a bundle, or a single driver of either kind. */
     val onImportZip: () -> Unit = {},
     val onRestoreBundled: () -> Unit = {},
+    val onMaliSupport: () -> Unit = {},
 )
 
 /**
@@ -120,6 +126,31 @@ internal fun GpuDriversPanel(s: GpuDriversState, a: GpuDriversActions, onAdvance
     var showAll by rememberSaveable { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) {
         DeviceCard(s)
+        if (s.mali) {
+            SettingsGroup(stringResource(R.string.gpu_mali_support_title)) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                    Text(stringResource(R.string.gpu_mali_support_hint), fontSize = 13.sp, color = colors.onSurfaceVariant)
+                    Text(
+                        s.maliSupportVersion?.let { stringResource(R.string.gpu_mali_support_installed, it) }
+                            ?: stringResource(R.string.gpu_mali_support_missing),
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (s.maliSupportVersion != null) pal.good else AttentionAmber,
+                    )
+                    if (s.maliSupportStatus.isNotEmpty()) {
+                        Text(s.maliSupportStatus, fontSize = 12.5.sp, color = colors.onSurfaceVariant)
+                    }
+                    if (s.maliSupportBusy) {
+                        LinearProgressIndicator(
+                            progress = { s.maliSupportPercent.coerceAtLeast(0) / 100f },
+                            modifier = Modifier.fillMaxWidth().height(6.dp).clip(CircleShape),
+                        )
+                    } else {
+                        SecondaryButton(stringResource(R.string.gpu_mali_support_get), compact = true) { a.onMaliSupport() }
+                    }
+                }
+            }
+        }
         if (!s.unsupported) {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 ModeCard(Icons.Outlined.AutoAwesome, stringResource(R.string.common_auto), stringResource(R.string.gpu_auto_hint), s.auto, Modifier.weight(1f)) { a.onAuto(true) }

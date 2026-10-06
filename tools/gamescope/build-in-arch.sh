@@ -43,6 +43,10 @@ _droiddeck_prepare() {
     echo \"applying \$(basename \"\$p\")\"
     patch -p1 --no-backup-if-mismatch < \"\$p\"
   done
+
+  # Kbase-backed PanVK has no DRM render/primary node. Nested Wayland is not
+  # session-based and does not require DRM identity, so bypass only that check.
+  python3 /work/tools/gamescope/patch-nested-drm.py src/rendervulkan.cpp
 }
 if declare -f prepare >/dev/null; then
   eval \"\$(declare -f prepare | sed 's/^prepare ()/_arch_prepare ()/')\"

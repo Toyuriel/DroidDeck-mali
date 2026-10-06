@@ -859,9 +859,8 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
         WaylandCompositor.nativeSetScaleMode(SCALE_FIT, ALIGN_CENTER)
         WaylandCompositor.nativeSetUpscaler(SessionPrefs.upscaler(this))
         WaylandCompositor.nativeSetUpscaleSharpness(SessionPrefs.upscaleSharpness(this))
-        // The session's folder, claimed here because the compositor starts before the service and
-        // opens its log once. The compositor reads the path from its environment; setting it after
-        // it has started changes nothing, which is why the service copies the file in at teardown.
+        // The session's folder, claimed before the service starts. Also retarget the native log
+        // when the process-wide compositor is reused, so every session ZIP has its own wayland.log.
         if (!SessionState.running) {
             val waylandLog = File(SessionPaths.beginOrCurrent(this), "wayland.log")
             WaylandCompositor.setSessionLogFile(waylandLog)

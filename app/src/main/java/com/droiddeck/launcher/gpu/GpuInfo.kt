@@ -5,7 +5,8 @@ import com.droiddeck.launcher.core.FileUtils
 import java.io.File
 
 /**
- * What GPU this is, in the terms the driver lists are sorted by. KGSL names the model
+ * What GPU this is, in the terms the driver lists are sorted by.
+ * Mali support in this fork is intentionally experimental and uses the system Vulkan path. KGSL names the model
  * ("Adreno740v2", "Adreno825"); the family decides which Turnip builds run on it at all, and the
  * support level is what the app has actually been tested on (Adreno 725 and up) - an Adreno 610
  * may start, but it is not "supported" just because it is a Qualcomm chip.
@@ -29,6 +30,8 @@ data class GpuInfo(
         A6XX("Adreno 6xx"),
         /** An Adreno whose model KGSL does not give: treated as the newest family it could be. */
         ADRENO_UNKNOWN("Adreno"),
+        /** ARM Mali/Immortalis using Android\'s vendor Vulkan stack. */
+        MALI("ARM Mali"),
         NOT_ADRENO("Not an Adreno GPU"),
     }
 
@@ -37,6 +40,7 @@ data class GpuInfo(
     val support: Support
         get() = when {
             family == Family.NOT_ADRENO -> Support.UNSUPPORTED
+            family == Family.MALI -> Support.UNTESTED
             family == Family.A8XX -> Support.TESTED
             family == Family.A7XX && model >= 725 -> Support.TESTED
             else -> Support.UNTESTED
@@ -46,22 +50,37 @@ data class GpuInfo(
     val supportText: String
         get() = when (support) {
             Support.TESTED -> "Supported"
-            Support.UNTESTED -> if (family == Family.A7XX_LOW) "Experimental: its drivers are test builds"
-                else "Below tested hardware (Adreno 725 and newer): it may not run"
+            Support.UNTESTED -> when (family) {
+                Family.MALI -> "Experimental Mali: Android system Vulkan display path; Linux runtime GPU support is still experimental"
+                Family.A7XX_LOW -> "Experimental: its drivers are test builds"
+                else -> "Below tested hardware (Adreno 725 and newer): it may not run"
+            }
             Support.UNSUPPORTED -> "Not supported: DroidDeck needs an Adreno (Snapdragon) GPU"
         }
 
     companion object {
         fun detect(): GpuInfo {
             val adreno = File("/sys/class/kgsl/kgsl-3d0").exists() || File("/vendor/lib64/hw/vulkan.adreno.so").exists()
+            val hardware = Build.HARDWARE.lowercase(java.util.Locale.US)
+            val mali = !adreno && (listOf(
+                "/vendor/lib64/hw/vulkan.mali.so",
+                "/vendor/lib64/egl/libGLES_mali.so",
+                "/vendor/lib64/libMali.so",
+                "/system/vendor/lib64/hw/vulkan.mali.so"
+            ).any { File(it).exists() } || hardware.startsWith("mt"))
             val raw = listOf("/sys/class/kgsl/kgsl-3d0/gpu_model", "/sys/class/kgsl/kgsl-3d0/gpu_chipid")
                 .firstNotNullOfOrNull { FileUtils.readString(File(it))?.trim()?.takeIf(String::isNotEmpty) }
             val soc = if (Build.VERSION.SDK_INT >= 31) Build.SOC_MODEL.takeIf { it.isNotBlank() && it != Build.UNKNOWN }.orEmpty() else ""
             val model = raw?.let { Regex("""(\d{3})""").find(it)?.groupValues?.get(1)?.toIntOrNull() } ?: 0
-            val family = familyOf(adreno, model)
+            val family = if (mali) Family.MALI else familyOf(adreno, model)
             val samsung = Build.MANUFACTURER.equals("samsung", ignoreCase = true)
             return GpuInfo(
-                name = if (!adreno) Build.HARDWARE.ifBlank { "this GPU" } else if (model > 0) "Adreno $model" else "Adreno",
+                name = when {
+                    adreno && model > 0 -> "Adreno $model"
+                    adreno -> "Adreno"
+                    mali -> "Mali (${Build.HARDWARE.ifBlank { "system" }})"
+                    else -> Build.HARDWARE.ifBlank { "this GPU" }
+                },
                 model = model, family = family, soc = soc,
                 oneUi8Gen2 = samsung && model == 740,
             )

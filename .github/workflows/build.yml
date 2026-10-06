@@ -18,24 +18,28 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pull-requests: write
 
 concurrency:
   # Replace older builds only for the same PR. Each push/dispatch gets its own group so one main
   # build cannot cancel another before it signs and publishes.
-  group: build-${{ github.event.pull_request.number || github.run_id }}
+  # Keep the normal "new commit replaces the older PR build" behavior, but isolate manual
+  # re-runs from a stale/cancelled attempt. GitHub can otherwise re-enter the same build-PR group
+  # before the old attempt has fully released it and cancel the retry before its first step.
+  group: build-${{ github.event.pull_request.number || github.run_id }}-attempt-${{ github.run_attempt }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  PRELOAD_CACHE_VERSION: v2
+  PRELOAD_CACHE_VERSION: v3-mali-bridge1
+  DROIDDECK_UPSTREAM_REPO: Droid-Deck/DroidDeck
 
 jobs:
   build:
     name: Build APK
     if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 75
     outputs:
       variants: ${{ steps.variants.outputs.list }}
     steps:
@@ -157,7 +161,27 @@ jobs:
         uses: actions/cache@v4
         with:
           path: app/src/main/assets/linuxfs
-          key: preloads-${{ env.PRELOAD_CACHE_VERSION }}-${{ hashFiles('app/src/main/cpp/fakeinput_steam.cpp', 'tools/linuxfs/preload/*.c', 'tools/linuxfs/clipboard/*.c', 'tools/proot/fastpath/*.c', 'tools/linuxfs/overlay/usr/local/bin/*', 'tools/linuxfs/overlay/usr/bin/**', 'tools/linuxfs/desktop/*', 'tools/gamescope/release.env', 'tools/wlroots/release.env', 'tools/mangoapp/*') }}
+          key: preloads-${{ env.PRELOAD_CACHE_VERSION }}-${{ hashFiles('app/src/main/cpp/fakeinput_steam.cpp', 'tools/linuxfs/preload/*.c', 'tools/linuxfs/clipboard/*.c', 'tools/proot/fastpath/*.c', 'tools/linuxfs/overlay/usr/local/bin/*', 'tools/linuxfs/overlay/usr/bin/**', 'tools/linuxfs/desktop/*', 'tools/gamescope/release.env', 'tools/wlroots/release.env', 'tools/mangoapp/*', 'tools/mali-bridge/**', 'tools/panvk-linux/**') }}
+          restore-keys: |
+            preloads-${{ env.PRELOAD_CACHE_VERSION }}-
+
+      - name: Check restored Mali bridge
+        id: mali-restored
+        run: |
+          if test -f app/src/main/assets/linuxfs/usr/local/lib/droiddeck-mali/lib/libsysvk.so \
+             && test -f app/src/main/assets/linuxfs/usr/local/lib/droiddeck-mali/lib/libhardware.so \
+             && test -f app/src/main/assets/linuxfs/usr/local/lib/droiddeck-mali/lib/libVkLayer_window_system_integration.so \
+             && grep -q 'droiddeck-patches tls-sidecar-v3-meow' app/src/main/assets/linuxfs/usr/local/lib/droiddeck-mali/SOURCES.txt 2>/dev/null; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up ARM64 emulation for the Mali bridge
+        if: steps.mali-restored.outputs.found != 'true'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
 
       - name: Build libfakeinput.so and libblsession.so (glibc aarch64)
         if: steps.preloads.outputs.cache-hit != 'true'
@@ -190,7 +214,7 @@ jobs:
           done
           if [ -f tools/gamescope/release.env ]; then
             . tools/gamescope/release.env
-            gh release download "${GAMESCOPE_TAG}" -R "${GITHUB_REPOSITORY}" -p gamescope.tzst -O gamescope.tzst
+            gh release download "${GAMESCOPE_TAG}" -R "${GAMESCOPE_REPO:-$DROIDDECK_UPSTREAM_REPO}" -p gamescope.tzst -O gamescope.tzst
             echo "${GAMESCOPE_SHA256}  gamescope.tzst" | sha256sum -c -
             tar --use-compress-program=unzstd -xf gamescope.tzst -C "$D"
             test -f "$D/usr/local/bin/gamescope"
@@ -198,7 +222,7 @@ jobs:
           fi
           if [ -f tools/wlroots/release.env ]; then
             . tools/wlroots/release.env
-            gh release download "${WLROOTS_TAG}" -R "${GITHUB_REPOSITORY}" -p wlroots.tzst -O wlroots.tzst
+            gh release download "${WLROOTS_TAG}" -R "${DROIDDECK_UPSTREAM_REPO}" -p wlroots.tzst -O wlroots.tzst
             echo "${WLROOTS_SHA256}  wlroots.tzst" | sha256sum -c -
             tar --use-compress-program=unzstd -xf wlroots.tzst -C "$D"
             test -f "$D/usr/local/lib/droiddeck-wlroots/libwlroots-0.20.so"
@@ -232,6 +256,18 @@ jobs:
           install -Dm644 tools/linuxfs/desktop/panel.conf "$D/etc/xdg/lxqt/panel.conf"
           install -Dm644 tools/linuxfs/desktop/firefox-droiddeck.js "$D/usr/lib/firefox/defaults/pref/droiddeck.js"
           ls -lR "$D"
+
+      - name: Build experimental Mali Android-Vulkan bridge
+        if: steps.mali-restored.outputs.found != 'true'
+        run: |
+          set -euo pipefail
+          docker run --rm --platform linux/arm64 \
+            -v "$PWD:/src" -w /src ubuntu:24.04 \
+            bash tools/mali-bridge/build-in-arm64.sh
+          test -f app/src/main/assets/linuxfs/usr/local/lib/droiddeck-mali/lib/libsysvk.so
+          test -f app/src/main/assets/linuxfs/usr/local/lib/droiddeck-mali/lib/libhardware.so
+          test -f app/src/main/assets/linuxfs/usr/local/lib/droiddeck-mali/lib/libVkLayer_window_system_integration.so
+          test -f app/src/main/assets/linuxfs/usr/share/vulkan/implicit_layer.d/droiddeck-mali-wsi.json
 
       - name: Cache PulseAudio 13.0 source
         id: pa-src
@@ -312,6 +348,13 @@ jobs:
           key: cxx-${{ env.NDK_VERSION }}-${{ hashFiles('app/src/main/cpp/**') }}
           restore-keys: |
             cxx-${{ env.NDK_VERSION }}-
+
+      - name: Validate session and Mali scripts
+        run: |
+          set -euo pipefail
+          bash -n tools/linuxfs/overlay/usr/local/bin/bannerlator-session
+          bash -n tools/panvk-linux/build.sh
+          bash -n tools/mali-bridge/build-in-arm64.sh
 
       - name: Build
         id: build
@@ -450,6 +493,52 @@ jobs:
           if-no-files-found: error
           retention-days: 30
           compression-level: 0
+
+      - name: Build glibc PanVK G720/Kbase component
+        if: ${{ success() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'mali-x8pro-experimental' }}
+        run: |
+          set -euo pipefail
+          bash tools/panvk-linux/build.sh
+          test -f app/src/main/assets/linuxfs/usr/local/lib/droiddeck-mali/panvk/libvulkan_panfrost.so
+          test -f app/src/main/assets/linuxfs/usr/local/lib/droiddeck-mali/panvk/panfrost_icd.json
+
+      - name: Publish downloadable Mali Vulkan support
+        if: ${{ success() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'mali-x8pro-experimental' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          STAGE=$(mktemp -d)
+          mkdir -p "$STAGE/usr/local/lib" "$STAGE/usr/share/vulkan/implicit_layer.d"
+          cp -a app/src/main/assets/linuxfs/usr/local/lib/droiddeck-mali "$STAGE/usr/local/lib/"
+          cp app/src/main/assets/linuxfs/usr/share/vulkan/implicit_layer.d/droiddeck-mali-wsi.json \
+             "$STAGE/usr/share/vulkan/implicit_layer.d/"
+          PKG=droiddeck-mali-support-arm64.tar.zst
+          tar --use-compress-program='zstd -19' -cf "$PKG" -C "$STAGE" .
+          SHA=$(sha256sum "$PKG" | awk '{print $1}')
+          SIZE=$(stat -c %s "$PKG")
+          VERSION="0.1.${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:7}"
+          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/mali-support-latest/$PKG"
+          cat > mali-support.json <<EOF
+          {
+            "version": "$VERSION",
+            "arch": "arm64",
+            "url": "$URL",
+            "sha256": "$SHA",
+            "size": $SIZE
+          }
+          EOF
+          if gh release view mali-support-latest -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload mali-support-latest "$PKG" mali-support.json --clobber -R "$GITHUB_REPOSITORY"
+            gh release edit mali-support-latest -R "$GITHUB_REPOSITORY" \
+              --title "DroidDeck Mali Vulkan Support" \
+              --notes "Experimental guest Vulkan bridge for ARM Mali/MediaTek. Built from commit ${GITHUB_SHA}."
+          else
+            gh release create mali-support-latest "$PKG" mali-support.json -R "$GITHUB_REPOSITORY" \
+              --prerelease --title "DroidDeck Mali Vulkan Support" \
+              --notes "Experimental guest Vulkan bridge for ARM Mali/MediaTek. Built from commit ${GITHUB_SHA}."
+          fi
+          echo "Published Mali support $VERSION ($SIZE bytes, sha256 $SHA)" >> "$GITHUB_STEP_SUMMARY"
 
   sign:
     needs: build

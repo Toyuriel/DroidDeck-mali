@@ -46,14 +46,96 @@ collect_steam_logs() {
 }
 # A session that is killed never reaches the copy below, and those are the sessions worth reading.
 trap 'collect_steam_logs 2>/dev/null || true' TERM INT HUP
-# The driver everything in this session draws with: gamescope's compositing, the client's UI
-# (OpenGL through Zink), every game Proton launches, and in desktop mode every program on it.
-# BL_VK_DRIVER names an imported driver's ICD manifest on the Android side, which is bound into the
-# session at its own path; unset means the runtime keeps the Turnip it was built with.
-# VK_DRIVER_FILES REPLACES the loader's search, so a manifest whose library is unreadable would
-# leave the session with no Vulkan at all - check both before setting it, and say so in the log
-# rather than fail silently half a minute later.
-if [ -n "${BL_VK_DRIVER:-}" ]; then
+
+# A Steam session can disappear before its own client log says anything. Keep a short, argument-free
+# process timeline so a report tells us whether gamescope, the native Steam client or steamwebhelper
+# was the first process to vanish. No command lines or environment variables are recorded.
+trace_steam_processes() {
+  [ "$mode" = steam ] || return 0
+  [ -z "${BL_INSIDE:-}" ] || return 0
+  [ -n "${BL_DEBUG_DIR:-}" ] || return 0
+  (
+    out="$BL_DEBUG_DIR/processes.log"
+    echo "DroidDeck Steam process timeline" > "$out"
+    echo "Columns: utc name pid ppid state threads vmrss" >> "$out"
+    for _bl_tick in $(seq 1 180); do
+      _bl_now=$(date -u +%H:%M:%S.%3N 2>/dev/null || date -u +%H:%M:%S)
+      _bl_seen=0
+      for _bl_d in /proc/[0-9]*; do
+        [ -r "$_bl_d/status" ] || continue
+        _bl_name=$(sed -n 's/^Name:[[:space:]]*//p' "$_bl_d/status" 2>/dev/null)
+        case "$_bl_name" in
+          gamescope|steam|steamwebhelper|Xwayland)
+            _bl_pid=${_bl_d#/proc/}
+            _bl_ppid=$(sed -n 's/^PPid:[[:space:]]*//p' "$_bl_d/status" 2>/dev/null)
+            _bl_state=$(sed -n 's/^State:[[:space:]]*\([^[:space:]]*\).*/\1/p' "$_bl_d/status" 2>/dev/null)
+            _bl_threads=$(sed -n 's/^Threads:[[:space:]]*//p' "$_bl_d/status" 2>/dev/null)
+            _bl_rss=$(sed -n 's/^VmRSS:[[:space:]]*//p' "$_bl_d/status" 2>/dev/null)
+            printf '%s %s pid=%s ppid=%s state=%s threads=%s rss=%s\n' \
+              "$_bl_now" "$_bl_name" "$_bl_pid" "${_bl_ppid:-?}" "${_bl_state:-?}" "${_bl_threads:-?}" "${_bl_rss:-?}" >> "$out"
+            _bl_seen=1
+            ;;
+        esac
+      done
+      [ "$_bl_seen" = 0 ] && echo "$_bl_now none" >> "$out"
+      sleep 0.5
+    done
+  ) &
+  BL_PROCESS_TRACE_PID=$!
+  echo "== diagnostics: Steam process trace pid $BL_PROCESS_TRACE_PID -> $BL_DEBUG_DIR/processes.log"
+}
+trace_steam_processes
+# The hosted Linux desktop is our recovery/debug path on Mali: keep it independent from
+# libhybris/sysvk until that bridge is proven. LXQt/labwc on pixman need no Vulkan at all.
+if [ "$mode" = lxqt ] && [ "${BL_DESKTOP_SOFTWARE:-0}" = 1 ]; then
+  unset BL_MALI_ANDROID_VULKAN BL_VK_DRIVER TU_DEBUG VK_DRIVER_FILES VK_ICD_FILENAMES
+  unset DROIDDECK_MALI_WSI HYBRIS_LINKER_DIR HYBRIS_LD_LIBRARY_PATH HYBRIS_PTHREAD_RAW_EXIT HYBRIS_LD_DEBUG
+  unset MESA_LOADER_DRIVER_OVERRIDE GALLIUM_DRIVER LIBGL_KOPPER_DRI2
+  unset ZINK_DESCRIPTORS ZINK_DEBUG mesa_glthread MESA_NO_ERROR
+  export LIBGL_ALWAYS_SOFTWARE=1
+  export BL_WLR_RENDERER=pixman
+  echo "== desktop: software-safe mode; Mali Vulkan bridge completely bypassed"
+fi
+
+# Qualcomm keeps the original Turnip path. The X8 Pro uses native glibc PanVK/Kbase
+# for Gamescope and games, with Android's Vulkan driver presenting their output.
+# Do not silently switch a failed PanVK session to the incompatible libhybris experiments.
+if [ "${BL_MALI_ANDROID_VULKAN:-0}" = 1 ]; then
+  bl_mali_root=/usr/local/lib/droiddeck-mali
+  bl_panvk_icd="$bl_mali_root/panvk/panfrost_icd.json"
+  bl_panvk_so="$bl_mali_root/panvk/libvulkan_panfrost.so"
+  if [ "${BL_MALI_PANVK:-0}" != 1 ] || [ -z "${PANVK_KBASE_FD_SOCKET:-}" ] \
+     || [ ! -r "$bl_panvk_icd" ] || [ ! -r "$bl_panvk_so" ]; then
+    echo "== ERROR native Mali support is incomplete: PanVK package or Kbase broker missing"
+    exit 78
+  fi
+
+  unset BL_VK_DRIVER TU_DEBUG DROIDDECK_MALI_WSI
+  unset HYBRIS_LINKER_DIR HYBRIS_LD_LIBRARY_PATH HYBRIS_PTHREAD_RAW_EXIT HYBRIS_LD_DEBUG
+  export VK_DRIVER_FILES="$bl_panvk_icd" VK_ICD_FILENAMES="$bl_panvk_icd"
+  export PANVK_DEBUG="${PANVK_DEBUG:-startup}"
+  echo "== vulkan driver: native PanVK Kbase/CSF, ICD=$VK_DRIVER_FILES"
+  [ -r "$bl_mali_root/panvk/SOURCE.txt" ] && cat "$bl_mali_root/panvk/SOURCE.txt"
+
+  # Only probe before Gamescope. Repeating vulkaninfo inside it creates temporary X11/Wayland
+  # windows through Gamescope WSI, causing hide/remap transitions before Steam even starts.
+  if [ -z "${BL_INSIDE:-}" ] && command -v vulkaninfo >/dev/null 2>&1; then
+    step "checking Mali Vulkan"
+    bl_panvk_probe=$(mktemp) || exit 78
+    if timeout 20s vulkaninfo --summary >"$bl_panvk_probe" 2>&1; then
+      echo "== PanVK Vulkan probe: PASS"
+      head -120 "$bl_panvk_probe"
+    else
+      bl_panvk_rc=$?
+      echo "== ERROR PanVK Vulkan probe failed rc=$bl_panvk_rc; Steam was not started"
+      head -160 "$bl_panvk_probe"
+      rm -f "$bl_panvk_probe"
+      exit 78
+    fi
+    rm -f "$bl_panvk_probe"
+  fi
+  unset bl_panvk_probe bl_panvk_rc bl_panvk_icd bl_panvk_so bl_mali_root
+elif [ -n "${BL_VK_DRIVER:-}" ]; then
   bl_icd_lib=$(sed -n 's/.*"library_path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$BL_VK_DRIVER" 2>/dev/null | head -1)
   # JSON may escape the separator: org.json writes "\/data\/user\/0\/...". The Vulkan loader
   # parses that correctly; this check has to as well, or an absolute path looks relative and gets
@@ -150,6 +232,14 @@ if [ -z "${BL_INSIDE:-}" ]; then
   fi
   args=(--backend wayland --expose-wayland -f -W "$width" -H "$height" -w "$nested" -h "$height")
   [ "$nested" != "$width" ] && args+=(-S stretch)
+  # Gamescope 3.16.29's Wayland backend otherwise forwards up to nine independent planes.
+  # Its composed path waits for the Vulkan result and submits one complete image to Android.
+  # Use it on Mali while the host's synchronized-subsurface support remains incomplete.
+  # This costs one composition pass; BL_MALI_FORCE_COMPOSITION=0 is an explicit diagnostic opt-out.
+  if [ "${BL_MALI_ANDROID_VULKAN:-0}" = 1 ] && [ "${BL_MALI_FORCE_COMPOSITION:-1}" = 1 ]; then
+    args+=(--force-composition)
+    echo "== gamescope: Mali single composed frame (PanVK completion before host commit)"
+  fi
   # -r is what gamescope advertises as the refresh rate, and what a game reads as the display's.
   # Left unset it defaults to 60, so a 120 Hz panel offers only 60 Hz in game settings. The FPS
   # limiter wins when it is on (it is a deliberate cap); otherwise use the panel's own rate.
@@ -180,6 +270,7 @@ if [ -z "${BL_INSIDE:-}" ]; then
   # still offers the levels and nothing appears. Starts hidden until the client writes a level.
   # BL_MANGOAPP=0 turns it off (one community build found Valve's mangoapp crashing on Turnip).
   if [ "$mode" = steam ] && [ "${BL_STEAMDECK:-0}" = 1 ] && [ "${BL_MANGOAPP:-1}" = 1 ] \
+     && [ "${BL_MALI_ANDROID_VULKAN:-0}" != 1 ] \
      && [ "${BL_STEAM_UI:-}" != desktop ] && command -v mangoapp >/dev/null 2>&1; then
     MANGOHUD_CONFIGFILE=$(mktemp /tmp/mangohud.XXXXXXXX)
     echo no_display > "$MANGOHUD_CONFIGFILE"
@@ -188,6 +279,14 @@ if [ -z "${BL_INSIDE:-}" ]; then
     echo "== gamescope: mangoapp on ($(command -v mangoapp), config $MANGOHUD_CONFIGFILE)"
   fi
   export BL_INSIDE=1
+  if [ "${BL_MALI_ANDROID_VULKAN:-0}" = 1 ]; then
+    echo "== gamescope: native Mali profile, mangoapp disabled; launching compositor"
+    gamescope "${args[@]}" -- "$0" "$mode" "$@"
+    bl_gamescope_rc=$?
+    echo "== gamescope exited rc=$bl_gamescope_rc"
+    collect_steam_logs 2>/dev/null || true
+    exit "$bl_gamescope_rc"
+  fi
   exec gamescope "${args[@]}" -- "$0" "$mode" "$@"
 fi
 
@@ -234,6 +333,20 @@ case $mode in
       echo "== program cores: $cores"
       taskset -cp "$cores" $$ >/dev/null 2>&1 || true
     fi
+    # Steam needs the global GL->Zink route for CEF, but native Vulkan emulators do not. PPSSPP
+    # defaults to OpenGL on Linux even when Vulkan works, which turns its renderer into
+    # OpenGL -> Zink -> PanVK. On Mali force PPSSPP's own Vulkan backend and remove only the GL
+    # overrides from the emulator process; gamescope was already started with PanVK above.
+    case "$(basename "$target")" in
+      PPSSPPSDL)
+        if [ "${BL_MALI_ANDROID_VULKAN:-0}" = 1 ]; then
+          unset MESA_LOADER_DRIVER_OVERRIDE GALLIUM_DRIVER LIBGL_KOPPER_DRI2
+          unset ZINK_DESCRIPTORS ZINK_DEBUG mesa_glthread
+          set -- --graphics=vulkan "$@"
+          echo "== PPSSPP: forcing native Vulkan on PanVK (no OpenGL/Zink translation)"
+        fi
+        ;;
+    esac
     # Player 1 on the controller in an emulator that has no profile of its own yet.
     python3 /usr/local/bin/bannerlator-pad-defaults 2>&1 || true
     case ${target,,} in
@@ -700,7 +813,7 @@ BUSCONF
         done
       ) &
     fi
-    echo "== steam args: ${_bl_ui[*]} -clientbeta $steam_channel -no-cef-sandbox -cef-force-gpu -cef-ozone-platform=x11 -cef-use-gl=angle -cef-use-angle=vulkan $*"
+    echo "== steam args base: ${_bl_ui[*]} -clientbeta $steam_channel $*"
     # An update that cannot install asks for a restart (rc=42) every time; the count is capped so a
     # session can never again loop in silence, which reads as a menu opening and closing by itself.
     steam_updates=0
@@ -746,10 +859,30 @@ BUSCONF
         echo "$steam_channel" > "$steam_beta"
       fi
       step "starting the Steam client${BL_STEAM_UI:+ ($BL_STEAM_UI UI)}"
+      _bl_cef=(-no-cef-sandbox)
+      if [ "${BL_MALI_ANDROID_VULKAN:-0}" = 1 ]; then
+        # Keep Chromium's GPU compositor active, but isolate only steamwebhelper from PanVK.
+        # The Wayland+llvmpipe experiment reached Ozone/Wayland correctly but Chromium could not
+        # create its Wayland GPU buffers without a DRM render node, leaving the whole UI black.
+        # libblsession therefore re-execs steamwebhelper itself with Chromium's real X11 +
+        # ANGLE/OpenGL switches and llvmpipe before CEF initializes. Xwayland handles presentation;
+        # gamescope and games continue to use PanVK.
+        export BL_STEAM_CEF_ISOLATED=1
+        unset BL_STEAM_CEF_WAYLAND
+        _bl_cef+=(
+          -cef-force-gpu
+          -cef-disable-occlusion
+          -cef-no-restart-on-ui-mode-change
+        )
+        echo "== steam: Mali CEF mode = X11 + ANGLE/GL llvmpipe, shared-image fallbacks enabled (PanVK reserved for games)"
+      else
+        unset BL_STEAM_CEF_ISOLATED BL_STEAM_CEF_WAYLAND
+        _bl_cef+=(-cef-force-gpu -cef-ozone-platform=x11 -cef-use-gl=angle -cef-use-angle=vulkan)
+      fi
       "$steam_root/steamrtarm64/steam" "${_bl_ui[@]}" -clientbeta "$steam_channel" \
-        -no-cef-sandbox -cef-force-gpu -cef-ozone-platform=x11 \
-        -cef-use-gl=angle -cef-use-angle=vulkan "$@"
+        "${_bl_cef[@]}" "$@"
       rc=$?
+      unset _bl_cef
       echo "== steam exited rc=$rc"
       collect_steam_logs
       if [ -n "${BL_ADDED_GAMES:-}" ] && [ -f "$BL_ADDED_GAMES" ]; then

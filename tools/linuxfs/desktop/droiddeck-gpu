@@ -24,6 +24,11 @@ echo "== droiddeck-gpu $(date -u +%H:%M:%S): $* (gamescope ${width}x${height} on
 # through gamescope's own Xwayland, as in a Steam session.
 export WAYLAND_DISPLAY=wayland-0
 export GDK_BACKEND=x11 QT_QPA_PLATFORM=xcb SDL_VIDEODRIVER=x11
+# The pixman desktop deliberately disables Zink. A GPU-launched game needs the session's
+# Vulkan-backed OpenGL path again.
+unset LIBGL_ALWAYS_SOFTWARE
+export MESA_LOADER_DRIVER_OVERRIDE=zink GALLIUM_DRIVER=zink LIBGL_KOPPER_DRI2=true
+export ZINK_DESCRIPTORS=lazy ZINK_DEBUG=compact mesa_glthread=true MESA_NO_ERROR=1
 # AppImages cannot mount under proot; the menu entries already say so, a hand-typed one may not.
 export APPIMAGE_EXTRACT_AND_RUN=1
 gamescope "${args[@]}" -- "$@"

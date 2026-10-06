@@ -11,6 +11,8 @@ import android.os.Build
 import android.os.IBinder
 import com.droiddeck.launcher.MainActivity
 import com.droiddeck.launcher.R
+import com.droiddeck.launcher.gpu.GpuInfo
+import com.droiddeck.launcher.gpu.MaliSupportPackage
 
 /**
  * Keeps the process in the foreground while the Linux runtime downloads and unpacks. The runtime
@@ -42,8 +44,15 @@ class RuntimeInstallService : Service() {
                     manager?.notify(NOTIFICATION_ID, notification(stage, percent))
                 }
             }
-            if (removal) LinuxRuntimeInstaller.attach(progress)
+            val ok = if (removal) LinuxRuntimeInstaller.attach(progress) == true
             else LinuxRuntimeInstaller.install(applicationContext, release!!, progress)
+            if (!removal && ok && GpuInfo.detect().family == GpuInfo.Family.MALI) {
+                val problem = MaliSupportPackage.installLatest(applicationContext, progress)
+                if (problem != null) {
+                    android.util.Log.w("RuntimeInstallService", "Mali Vulkan support: $problem")
+                    manager?.notify(NOTIFICATION_ID, notification("Linux runtime installed; Mali support needs attention", -1))
+                }
+            }
             @Suppress("DEPRECATION")
             stopForeground(true)
             stopSelf(startId)

@@ -99,12 +99,25 @@ object SessionPaths {
 
     /** Let the next session claim a new folder. Called when a session ends. */
     @Synchronized
-    fun release(context: Context, ended: File) {
+    fun release(context: Context, ended: File, preservePrivate: Boolean = false) {
         // Only the session that owns the folder lets go of it (take() usually has already): the
         // next session may have claimed its own by the time the last one's collector gets here.
         if (dir == ended) dir = null
-        // A folder kept in the cache was never meant to outlive its session.
-        if (ended != null && ended.path.startsWith(context.cacheDir.path)) {
+        if (ended.path.startsWith(context.cacheDir.path)) {
+            if (preservePrivate && ended.isDirectory) {
+                // Logs can be disabled globally, but a Steam bring-up that instantly dies still needs
+                // one shareable report. Keep it under private files/logs, which SessionLogShare already
+                // searches and exposes only through FileProvider.
+                try {
+                    val parent = File(context.filesDir, "logs").apply { mkdirs() }
+                    val out = File(parent, ended.name)
+                    if (out.exists()) com.droiddeck.launcher.core.FileUtils.delete(out)
+                    ended.copyRecursively(out, overwrite = true)
+                    Log.i(TAG, "preserved private session log $out")
+                } catch (e: Exception) {
+                    Log.w(TAG, "could not preserve private session log", e)
+                }
+            }
             com.droiddeck.launcher.core.FileUtils.delete(ended)
         }
     }

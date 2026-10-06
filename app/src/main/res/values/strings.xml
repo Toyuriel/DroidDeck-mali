@@ -944,4 +944,10 @@
     <string name="game_file_folder">Choose a folder for frontend game files</string>
     <string name="game_file_exported">Game files saved to %1$s</string>
     <string name="game_frontend_files">Frontend files</string>
+    <string name="gpu_mali_support_title">Mali Vulkan support</string>
+    <string name="gpu_mali_support_hint">Guest bridge for Mali: sysvk + libhybris + Wayland WSI.</string>
+    <string name="gpu_mali_support_installed">Installed: %1$s</string>
+    <string name="gpu_mali_support_missing">Not installed yet</string>
+    <string name="gpu_mali_support_get">Download / update</string>
+    <string name="gpu_mali_support_busy">Installing Mali support…</string>
 </resources>

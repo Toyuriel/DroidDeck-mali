@@ -1,5 +1,8 @@
 package com.droiddeck.launcher.session
 
+import com.droiddeck.launcher.gpu.GpuInfo
+import com.droiddeck.launcher.gpu.MaliSupportPackage
+import com.droiddeck.launcher.gpu.MaliKbaseFdBroker
 import com.droiddeck.launcher.gpu.LinuxVulkanDriver
 import com.droiddeck.launcher.gpu.LinuxVulkanDriverManager
 
@@ -242,14 +245,14 @@ class SessionService : Service() {
      * which is when they matter. The collecting itself is [SessionArtifacts], shared with the
      * crash handler and the next-start sweep so a folder is finished whichever way it ends.
      */
-    private fun collectSessionArtifacts(dir: File) {
+    private fun collectSessionArtifacts(dir: File, preservePrivate: Boolean) {
         try {
             SessionArtifacts.collect(this, dir, "session stopped")
         } finally {
             // Last, so everything above is in the file it is about - and only this session's:
             // a session that replaced this one may already own the capture and the folder.
             SessionLogCapture.stopFor(dir)
-            SessionPaths.release(this, dir)
+            SessionPaths.release(this, dir, preservePrivate)
         }
     }
 
@@ -276,10 +279,17 @@ class SessionService : Service() {
 
     private fun runSession(gen: Int) {
         SessionTerminal.clear()
+        val sessionDir = openSessionFolder()
+        val sessionLog = File(sessionDir, "session.log")
+        SessionEvents.record("startup.run_session_entered", mapOf("generation" to gen))
+
         try {
+            SessionEvents.record("startup.write_accounts.begin")
             LinuxRuntime.writeAccounts(this)
+            SessionEvents.record("startup.write_accounts.ok")
         } catch (e: Exception) {
             Log.e(TAG, "could not write the guest's passwd/group", e)
+            SessionEvents.fail("WRITE_ACCOUNTS_FAILED", e.message ?: "could not write guest accounts")
             stopSession(-1)
             return
         }
@@ -287,20 +297,71 @@ class SessionService : Service() {
         val root = LinuxRuntime.rootDir(this)
         val sessionRoot = LinuxRuntime.sessionRoot(this).apply { mkdirs() }
         val runtimeDir = File(filesDir, ".wayland-rt").apply { mkdirs() }
+        SessionEvents.record("startup.kill_stragglers.begin")
         killStragglers()
-        SessionFiles.stage(this, root)
+        SessionEvents.record("startup.kill_stragglers.ok")
 
-        val sessionDir = openSessionFolder()
-        val sessionLog = File(sessionDir, "session.log")
+        // Keep native PanVK support current independently from the APK. Catalog/network failure
+        // is non-fatal when a complete package is already installed.
+        if (GpuInfo.detect().family == GpuInfo.Family.MALI) {
+            val before = MaliSupportPackage.installedVersion(this)
+            SessionEvents.record("startup.mali_support.begin", mapOf("installed" to (before ?: "none")))
+            val startedAt = System.currentTimeMillis()
+            val problem = runCatching { MaliSupportPackage.installLatest(this) }.getOrElse {
+                Log.w(TAG, "Mali support auto-update", it)
+                it.message ?: "update failed"
+            }
+            val after = MaliSupportPackage.installedVersion(this)
+            SessionEvents.record(
+                "startup.mali_support.end",
+                mapOf(
+                    "installed" to (after ?: before ?: "none"),
+                    "problem" to problem,
+                    "elapsedMs" to (System.currentTimeMillis() - startedAt),
+                ),
+            )
+            if (problem != null) {
+                Log.w(TAG, "Mali support auto-update: " + problem + "; installed=" + (after ?: before ?: "none"))
+            } else {
+                Log.i(TAG, "Mali support ready: " + (after ?: "APK fallback") + " (was " + (before ?: "none") + ")")
+            }
+        }
+        SessionEvents.record("startup.stage_files.begin")
+        try {
+            SessionFiles.stage(this, root)
+            SessionEvents.record("startup.stage_files.ok")
+        } catch (e: Exception) {
+            Log.e(TAG, "staging session files", e)
+            SessionEvents.fail("STAGE_FILES_FAILED", e.message ?: "could not stage session files")
+            stopSession(-1)
+            return
+        }
 
         Log.i(TAG, GpuClockPin.start(this))
 
         val size = SessionState.outputSize
         val guest = ArrayList<String>()
+        var maliPanvkSocket: String? = null
+
+        if (GpuInfo.detect().family == GpuInfo.Family.MALI && SessionState.mode != MODE_DESKTOP) {
+            val socketName = "droiddeck-kbase-" + android.os.Process.myPid() + "-" + gen
+            val broker = MaliKbaseFdBroker(socketName)
+            broker.attach(this)
+            components.add(broker)
+            maliPanvkSocket = socketName
+            SessionEvents.record("mali.kbase_broker.configured", mapOf("socket" to socketName))
+            Log.i(TAG, "Mali PanVK Kbase broker configured: $socketName")
+        }
         // The desktop's Steam launchers start the client there (bannerlator-steam-launch), through the
         // same set-up as a Steam session: it gets what the client and its games are started with.
         val steamHere = SessionState.mode == MODE_STEAM || SessionState.mode == MODE_DESKTOP
         addClientEnvironment(guest, steamHere)
+        maliPanvkSocket?.let { socketName ->
+            // Guest environment entries must come after /usr/bin/env -i. Placing them before it
+            // makes PRoot treat NAME=value as the executable and exit before bannerlator-session.
+            guest.add("PANVK_KBASE_FD_SOCKET=" + socketName)
+            guest.add("BL_MALI_PANVK=1")
+        }
         // Where the fast path's description of proot's view goes, once the binds are known.
         val fastPathAt = guest.size
 
@@ -456,14 +517,25 @@ class SessionService : Service() {
         // by the teardown a second after the new one has started, and its exit used to arrive
         // here as "session ended: 137" and end the NEW session. An exit belongs to the session
         // that started it.
+        val prootLog = File(sessionDir, "proot.log")
+        runCatching {
+            prootLog.writeText("DroidDeck host/PRoot startup log\nmode=" + SessionState.mode + "\n\n")
+        }
+        SessionEvents.record("guest.launch.begin", mapOf("mode" to SessionState.mode))
         val pid = HostProcess.start(line, hostEnv.asArray(), root, { status ->
             if (gen != sessionGen) {
                 Log.i(TAG, "an earlier session's process ended ($status); the current one carries on")
                 return@start
             }
+            SessionEvents.record("guest.process_exit", mapOf("status" to status))
+            runCatching { prootLog.appendText("== PRoot exited status=" + status + "\n") }
             Log.i(TAG, "session ended: $status")
             stopSession(status ?: -1)
-        }, null)
+        }, { output ->
+            runCatching { prootLog.appendText(output + "\n") }
+            Log.i(TAG, "proot: $output")
+        })
+        SessionEvents.record("guest.launch.result", mapOf("pid" to pid))
         Log.i(TAG, "session pid $pid, log ${sessionLog.path}")
         if (gen != sessionGen || !SessionState.running) {
             Log.i(TAG, "session stopped while its guest was starting; taking it down")
@@ -511,13 +583,22 @@ class SessionService : Service() {
         SessionState.logDirectory = sessionDir
         SessionState.sessionId = sessionDir.name
         SessionState.eventsFile = File(sessionDir, "events.jsonl")
-        SessionEvents.record("session.logs_ready", mapOf("logDir" to sessionDir.path))
-        // Written first, so a session that dies in its first second still says what it ran on.
-        DeviceReport.write(this, File(sessionDir, "device.txt"), SessionState.mode)
-        NetworkReport.write(this, File(sessionDir, "network.txt"))
-        // Everything the app decides from here on - the driver it chose, the audio line, a rival
-        // client stopped, the exit status - reaches logcat and nowhere a user can get at. Mirror it.
+        // Capture first. Device/Kbase probing and report generation are diagnostics themselves and
+        // must not be able to erase the only evidence if they fail very early.
         SessionLogCapture.start(File(sessionDir, "app.log"))
+        SessionEvents.record("session.logs_ready", mapOf("logDir" to sessionDir.path))
+        runCatching {
+            DeviceReport.write(this, File(sessionDir, "device.txt"), SessionState.mode)
+        }.onFailure {
+            Log.e(TAG, "device report failed", it)
+            SessionEvents.record("diagnostics.device_report_failed", mapOf("error" to (it.message ?: it.javaClass.simpleName)))
+        }
+        runCatching {
+            NetworkReport.write(this, File(sessionDir, "network.txt"))
+        }.onFailure {
+            Log.e(TAG, "network report failed", it)
+            SessionEvents.record("diagnostics.network_report_failed", mapOf("error" to (it.message ?: it.javaClass.simpleName)))
+        }
         return sessionDir
     }
 
@@ -542,20 +623,34 @@ class SessionService : Service() {
         guest.add("MESA_LOADER_DRIVER_OVERRIDE=zink")
         guest.add("GALLIUM_DRIVER=zink")
         guest.add("LIBGL_KOPPER_DRI2=true")
-        LinuxRuntime.vulkanIcd(this)?.let { guest.add("VK_ICD_FILENAMES=" + it.path) }
-        // An imported glibc Turnip, when one is set (by the user, or by Auto): the session script
-        // checks the manifest and its library from inside and points the loader at it with
-        // VK_DRIVER_FILES, so the runtime's own driver above stays untouched and is what a bad
-        // import falls back to. One driver for every session: the driver's shader cache is keyed on
-        // its build, and with one per mode every emulator compiled its shaders twice.
-        val linuxDriverId = SessionPrefs.linuxDriver(this)
-        LinuxVulkanDriver.resolveIcdPath(this, linuxDriverId)
-            ?.let { guest.add(LinuxVulkanDriver.ENV + "=" + it) }
-        // Turnip's own debug switches, for the runtime's driver and everything on it. The file in
-        // Downloads holds the value verbatim ("sysmem", "sysmem,deck_emu"); with nothing there, an
-        // imported driver from the A710/A720/A722 legs gets "sysmem" on its own, which is what both
-        // its authors advise for those GPUs and what nothing else in the list needs.
-        tuDebug(linuxDriverId)?.let { guest.add("TU_DEBUG=$it") }
+        val maliAndroidVulkan = GpuInfo.detect().family == GpuInfo.Family.MALI
+        if (maliAndroidVulkan) {
+            // The Linux desktop itself deliberately stays software-only on Mali. This lets LXQt
+            // and labwc use the guest/Wayland path independently from experimental PanVK.
+            // Steam and GPU-launched programs use PanVK with the Kbase FD broker.
+            if (SessionState.mode == MODE_DESKTOP) {
+                guest.add("BL_MALI_ANDROID_VULKAN=0")
+                guest.add("BL_DESKTOP_SOFTWARE=1")
+                Log.i(TAG, "Mali desktop: Vulkan bridge disabled; forcing software pixman path")
+            } else {
+                // Mali does not use Turnip/Freedreno. The session script selects native glibc
+                // PanVK; the Android compositor presents through the system Vulkan driver.
+                guest.add("BL_MALI_ANDROID_VULKAN=1")
+                Log.i(TAG, "Mali session: native PanVK/Kbase requested; Android system Vulkan presentation")
+            }
+        } else {
+            LinuxRuntime.vulkanIcd(this)?.let { guest.add("VK_ICD_FILENAMES=" + it.path) }
+            // An imported glibc Turnip, when one is set (by the user, or by Auto): the session script
+            // checks the manifest and its library from inside and points the loader at it with
+            // VK_DRIVER_FILES, so the runtime's own driver above stays untouched and is what a bad
+            // import falls back to. One driver for every session: the driver's shader cache is keyed on
+            // its build, and with one per mode every emulator compiled its shaders twice.
+            val linuxDriverId = SessionPrefs.linuxDriver(this)
+            LinuxVulkanDriver.resolveIcdPath(this, linuxDriverId)
+                ?.let { guest.add(LinuxVulkanDriver.ENV + "=" + it) }
+            // Turnip's own debug switches are Qualcomm-only and must never reach a Mali session.
+            tuDebug(linuxDriverId)?.let { guest.add("TU_DEBUG=$it") }
+        }
         // Zink renders the client's UI (Chromium -> ANGLE -> Zink -> Turnip). Lazy descriptors is
         // the mode Zink recommends where the driver has no descriptor buffer, and what Ludashi ships
         // by default for its Zink path; a switch here because on one Fold the menus run at 14 fps.
@@ -1244,7 +1339,8 @@ class SessionService : Service() {
         // dump the crash buffer. That was about four and a half seconds of blocked main thread,
         // and Android ANR'd the app for it: the desktop session that would not let go.
         val ended = SessionPaths.take()
-        if (ended != null) Thread({ collectSessionArtifacts(ended) }, "session-collect").start()
+        val preservePrivateLog = SessionState.mode == MODE_STEAM
+        if (ended != null) Thread({ collectSessionArtifacts(ended, preservePrivateLog) }, "session-collect").start()
         components.reversed().forEach {
             try {
                 it.stop()

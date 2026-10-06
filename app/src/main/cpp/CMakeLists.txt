@@ -41,7 +41,7 @@ string(SUBSTRING "${WINFG_CHAIN_HASH_FULL}" 0 12 WINFG_CHAIN_HASH)
 message(STATUS "win-fg chain: ${WINFG_UPSTREAM} (src ${WINFG_CHAIN_HASH})")
 
 add_subdirectory(waylandcomp)
-add_library(sdnative SHARED sdnative/sdnative.c)
+add_library(sdnative SHARED sdnative/sdnative.c sdnative/mali_kbase_probe.c)
 target_link_libraries(sdnative log)
 
 # Rebuild Termux terminal-emulator's PTY JNI helper with the app's NDK instead of carrying its
